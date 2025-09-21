@@ -109,7 +109,7 @@ spec:
     lookbackMinutes: 5
   
   # MCP configuration
-  mcpEndpoint: http://dot-ai-mcp.dot-ai:3456
+  mcpEndpoint: http://dot-ai.127.0.0.1.nip.io/api/v1/tools/remediate
   mcpTool: remediate
   
   # Remediation mode
@@ -232,6 +232,9 @@ K8s Events → Controller → Context Enrichment → MCP Client → dot-ai MCP
 ## Dependencies
 
 - dot-ai MCP with remediate tool (issue #97)
+  - Server accessible at http://dot-ai.127.0.0.1.nip.io
+  - REST API endpoint: `/api/v1/tools/remediate` (POST)
+  - API documentation: https://github.com/vfarcic/dot-ai/blob/main/docs/rest-api-gateway-guide.md
 - Kubernetes cluster with appropriate RBAC
 - Go 1.21+ and Kubebuilder 3.x
 - Access to cluster metrics (optional)
