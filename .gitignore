@@ -7,7 +7,7 @@ tmp/
 
 # Binaries for the controller manager and generated files
 bin/
-manager
+/manager
 *.coverprofile
 
 # Kubernetes test environment
