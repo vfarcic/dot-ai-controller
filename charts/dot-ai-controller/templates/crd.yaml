@@ -1,0 +1,285 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: remediationpolicies.dot-ai.devopstoolkit.live
+spec:
+  group: dot-ai.devopstoolkit.live
+  names:
+    kind: RemediationPolicy
+    listKind: RemediationPolicyList
+    plural: remediationpolicies
+    singular: remediationpolicy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Whether the policy is ready
+      jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - description: Total events processed
+      jsonPath: .status.totalEventsProcessed
+      name: Events
+      type: integer
+    - description: Successful remediations
+      jsonPath: .status.successfulRemediations
+      name: Successful
+      type: integer
+    - description: Failed remediations
+      jsonPath: .status.failedRemediations
+      name: Failed
+      type: integer
+    - description: Remediation mode
+      jsonPath: .spec.mode
+      name: Mode
+      type: string
+    - description: Number of event selectors
+      jsonPath: .spec.eventSelectors
+      name: Selectors
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: RemediationPolicy is the Schema for the remediationpolicies API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of RemediationPolicy
+            properties:
+              confidenceThreshold:
+                default: 0.8
+                description: Minimum confidence required for automatic execution (0.0-1.0)
+                maximum: 1
+                minimum: 0
+                type: number
+              eventSelectors:
+                description: Event selection criteria
+                items:
+                  description: EventSelector defines criteria for selecting Kubernetes
+                    events
+                  properties:
+                    confidenceThreshold:
+                      description: |-
+                        Minimum confidence required for automatic execution (0.0-1.0)
+                        Overrides the global policy confidenceThreshold when specified
+                      maximum: 1
+                      minimum: 0
+                      type: number
+                    involvedObjectKind:
+                      description: Kind of the involved object
+                      type: string
+                    maxRiskLevel:
+                      description: |-
+                        Maximum risk level allowed for automatic execution
+                        Overrides the global policy maxRiskLevel when specified
+                      enum:
+                      - low
+                      - medium
+                      - high
+                      type: string
+                    mode:
+                      description: |-
+                        Remediation mode for this specific selector: "manual" or "automatic"
+                        Overrides the global policy mode when specified
+                      enum:
+                      - manual
+                      - automatic
+                      type: string
+                    namespace:
+                      description: Namespace selector
+                      type: string
+                    reason:
+                      description: Reason for the event
+                      type: string
+                    type:
+                      description: Type of event (Warning, Normal)
+                      type: string
+                  type: object
+                type: array
+              maxRiskLevel:
+                default: low
+                description: Maximum risk level allowed for automatic execution
+                enum:
+                - low
+                - medium
+                - high
+                type: string
+              mcpEndpoint:
+                description: MCP endpoint URL
+                type: string
+              mcpTool:
+                default: remediate
+                description: MCP tool name (always "remediate")
+                type: string
+              mode:
+                default: manual
+                description: 'Remediation mode: "manual" or "automatic"'
+                enum:
+                - manual
+                - automatic
+                type: string
+              notifications:
+                description: Notification configuration
+                properties:
+                  slack:
+                    description: Slack notification configuration
+                    properties:
+                      channel:
+                        description: Slack channel (for display purposes only)
+                        type: string
+                      enabled:
+                        default: false
+                        description: Enable Slack notifications
+                        type: boolean
+                      notifyOnComplete:
+                        default: true
+                        description: Notify when remediation completes (default true)
+                        type: boolean
+                      notifyOnStart:
+                        default: false
+                        description: Notify when remediation starts (optional, default
+                          false)
+                        type: boolean
+                      webhookUrl:
+                        description: Slack webhook URL (required when enabled)
+                        type: string
+                    type: object
+                type: object
+              rateLimiting:
+                description: Rate limiting configuration
+                properties:
+                  cooldownMinutes:
+                    default: 5
+                    description: Cooldown period in minutes after processing
+                    type: integer
+                  eventsPerMinute:
+                    default: 10
+                    description: Maximum events per minute
+                    type: integer
+                type: object
+            required:
+            - eventSelectors
+            - mcpEndpoint
+            type: object
+          status:
+            description: status defines the observed state of RemediationPolicy
+            properties:
+              conditions:
+                description: Current conditions of the policy
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failedRemediations:
+                description: Number of failed remediation calls
+                format: int64
+                type: integer
+              lastMcpMessageGenerated:
+                description: Timestamp of last MCP message generated
+                format: date-time
+                type: string
+              lastProcessedEvent:
+                description: Timestamp of last processed event
+                format: date-time
+                type: string
+              lastRateLimitedEvent:
+                description: Timestamp of last rate limited event
+                format: date-time
+                type: string
+              rateLimitedEvents:
+                description: Number of events that were rate limited
+                format: int64
+                type: integer
+              successfulRemediations:
+                description: Number of successful remediation calls
+                format: int64
+                type: integer
+              totalEventsProcessed:
+                description: Total number of events processed
+                format: int64
+                type: integer
+              totalMcpMessagesGenerated:
+                description: Total number of MCP messages generated
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

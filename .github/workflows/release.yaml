@@ -1,0 +1,133 @@
+name: Test and Release
+
+on:
+  push:
+    branches:
+      - main
+      - feature/prd-1-kubernetes-event-watcher-controller  # TEMPORARY for testing
+  pull_request:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Run Unit Tests
+      run: make test
+
+    - name: Run E2E Tests
+      run: make test-e2e
+
+  build-and-release:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+      packages: write
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for version calculation
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: 'latest'
+
+    - name: Calculate Next Version
+      id: version
+      run: |
+        # Get the latest tag, default to v0.0.0 if no tags exist
+        latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+        echo "Latest tag: $latest_tag"
+        
+        # Extract version numbers (remove 'v' prefix)
+        version=${latest_tag#v}
+        IFS='.' read -r major minor patch <<< "$version"
+        
+        # Increment minor version
+        minor=$((minor + 1))
+        new_version="v${major}.${minor}.0"
+        
+        echo "New version: $new_version"
+        echo "version=$new_version" >> $GITHUB_OUTPUT
+        echo "version_no_v=${new_version#v}" >> $GITHUB_OUTPUT
+
+    - name: Generate Manifests and Copy CRD
+      run: |
+        make generate manifests
+        cp config/crd/bases/dot-ai.devopstoolkit.live_remediationpolicies.yaml charts/dot-ai-controller/templates/crd.yaml
+
+    - name: Update Helm Chart Version
+      run: |
+        sed -i "s/^version:.*/version: ${{ steps.version.outputs.version_no_v }}/" charts/dot-ai-controller/Chart.yaml
+        sed -i "s/^appVersion:.*/appVersion: \"${{ steps.version.outputs.version }}\"/" charts/dot-ai-controller/Chart.yaml
+
+    - name: Commit Version Changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add charts/dot-ai-controller/Chart.yaml charts/dot-ai-controller/templates/crd.yaml
+        git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
+        git push
+
+    - name: Build and Push Docker Image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+    - name: Package and Push Helm Chart
+      run: |
+        helm package charts/dot-ai-controller
+        helm push dot-ai-controller-${{ steps.version.outputs.version_no_v }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository }}/charts
+
+    - name: Create Git Tag
+      run: |
+        git tag ${{ steps.version.outputs.version }}
+        git push origin ${{ steps.version.outputs.version }}
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.version }}
+        name: Release ${{ steps.version.outputs.version }}
+        generate_release_notes: true
+        files: |
+          dot-ai-controller-${{ steps.version.outputs.version_no_v }}.tgz

@@ -1,0 +1,58 @@
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: RemediationPolicy
+metadata:
+  name: comprehensive-example
+  namespace: dot-ai
+  labels:
+    environment: production
+    team: sre
+spec:
+  # Multiple event selectors with different configurations
+  # NOTE: Event processing behavior with multiple selectors:
+  # - Controller checks selectors in order (top to bottom)
+  # - Stops and processes event on FIRST matching selector
+  # - Event is processed exactly ONCE per policy (no duplicates)
+  # - Remaining selectors are not evaluated after first match
+  # - More specific selectors should be placed BEFORE general wildcards
+  eventSelectors:
+    # Monitor pod scheduling failures - AUTOMATIC remediation (can create missing resources)
+    - type: Warning
+      reason: FailedScheduling
+      involvedObjectKind: Pod
+      mode: automatic                 # Safe to automatically fix scheduling issues (create PVCs, etc.)
+      confidenceThreshold: 0.85       # High confidence required for infrastructure changes (overrides global 0.8)
+      maxRiskLevel: medium            # Allow medium-risk actions for infrastructure fixes (overrides global low)
+    
+    # Monitor ALL remaining Warning events for ANY resource - uses GLOBAL mode (manual)
+    - type: Warning                   # Warning events indicate potential issues requiring attention
+      reason: ""                      # Empty reason = wildcard, matches ANY event reason
+      involvedObjectKind: ""          # Empty kind = wildcard, matches ANY resource type (Pod, SQL, Node, etc.)
+      # namespace omitted = all namespaces
+      # mode omitted = uses global policy mode (manual)
+      # confidenceThreshold/maxRiskLevel omitted = uses global defaults
+  
+  # MCP configuration
+  mcpEndpoint: http://dot-ai.127.0.0.1.nip.io/api/v1/tools/remediate
+  mcpTool: remediate
+  
+  # Manual mode as global default (conservative approach)
+  mode: manual
+  
+  # Global automatic mode configuration (used when mode=automatic)
+  # These are defaults that can be overridden per selector
+  confidenceThreshold: 0.8            # Require 80% confidence for automatic actions (default from OpenAPI)
+  maxRiskLevel: low                   # Only allow low-risk automatic actions by default (default from OpenAPI)
+  
+  # Conservative rate limiting for production
+  rateLimiting:
+    eventsPerMinute: 5                # Lower rate for production safety
+    cooldownMinutes: 15               # Longer cooldown to prevent spam
+  
+  # Slack notifications configuration (DISABLED by default for safety)
+  notifications:
+    slack:
+      enabled: false                  # Enable Slack notifications (default: false)
+      webhookUrl: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"  # Replace with your actual webhook URL
+      channel: "#k8s-alerts"          # Channel where notifications will be sent
+      notifyOnStart: false            # Notify when remediation starts (default: false)
+      notifyOnComplete: true          # Notify when remediation completes (default: true)

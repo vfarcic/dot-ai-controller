@@ -1,0 +1,17 @@
+# Default values for dot-ai-controller
+
+# Image configuration
+image:
+  repository: ghcr.io/vfarcic/dot-ai-controller
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion
+  tag: ""
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi

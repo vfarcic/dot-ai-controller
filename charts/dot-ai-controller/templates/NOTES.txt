@@ -1,0 +1,24 @@
+🎉 dot-ai-controller has been installed!
+
+📋 WHAT'S INSTALLED:
+  • RemediationPolicy CRD for configuring event watching
+  • Controller deployment ({{ include "dot-ai-controller.fullname" . }}-manager)
+  • RBAC permissions for event monitoring
+
+🚀 NEXT STEPS:
+
+1. Verify the controller is running:
+   kubectl get pods -l app.kubernetes.io/name={{ include "dot-ai-controller.name" . }} -n {{ .Release.Namespace }}
+
+2. Check controller logs:
+   kubectl logs -l app.kubernetes.io/name={{ include "dot-ai-controller.name" . }} -n {{ .Release.Namespace }}
+
+3. Create a RemediationPolicy to start watching events - see repository for configuration examples
+
+4. Monitor RemediationPolicy status:
+   kubectl get remediationpolicies -o wide
+
+📖 DOCUMENTATION:
+   Repository: https://github.com/vfarcic/dot-ai-controller
+
+⚡ The controller will automatically start processing events that match your RemediationPolicy selectors!
