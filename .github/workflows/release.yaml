@@ -85,6 +85,11 @@ jobs:
         echo "version=$new_version" >> $GITHUB_OUTPUT
         echo "version_no_v=${new_version#v}" >> $GITHUB_OUTPUT
 
+    - name: Create Git Tag
+      run: |
+        git tag ${{ steps.version.outputs.version }}
+        git push origin ${{ steps.version.outputs.version }}
+
     - name: Generate Manifests and Copy CRD
       run: |
         make generate manifests
@@ -117,11 +122,6 @@ jobs:
       run: |
         helm package charts/dot-ai-controller
         helm push dot-ai-controller-${{ steps.version.outputs.version_no_v }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository }}/charts
-
-    - name: Create Git Tag
-      run: |
-        git tag ${{ steps.version.outputs.version }}
-        git push origin ${{ steps.version.outputs.version }}
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
