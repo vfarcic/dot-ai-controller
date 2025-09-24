@@ -34,6 +34,7 @@ jobs:
   build-and-release:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: github.event_name == 'push'
     permissions:
       contents: write
@@ -125,19 +126,11 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
-        # Multi-platform support - build both architectures in single step with timeout
-        platforms: linux/amd64,linux/arm64
         push: true
-        # GitHub Actions cache to speed up multi-arch builds
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        # Set shorter timeout to prevent hanging
-        build-args: |
-          BUILDKIT_INLINE_CACHE=1
+        platforms: linux/amd64,linux/arm64
         tags: |
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-      timeout-minutes: 15
 
     - name: Package and Push Helm Chart
       run: |
