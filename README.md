@@ -1,135 +1,70 @@
-# controller-init
-// TODO(user): Add simple overview of use/purpose
+# DevOps AI Toolkit Controller
+
+A Kubernetes controller that watches cluster events and forwards them to the [DevOps AI Toolkit](https://github.com/vfarcic/dot-ai) MCP remediate tool for AI-powered analysis and remediation. This controller acts as the bridge between Kubernetes cluster events and the DevOps AI Toolkit.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
 
-## Getting Started
+The DevOps AI Toolkit Controller monitors Kubernetes events (like pod failures, crashes, scheduling issues) and automatically sends them to the [DevOps AI Toolkit MCP remediate tool](https://github.com/vfarcic/dot-ai/blob/main/docs/mcp-remediate-guide.md) for analysis. It supports:
 
-### Prerequisites
-- go version v1.24.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+- **Event Watching**: Configurable filtering of Kubernetes events by type, reason, and involved objects
+- **DevOps AI Toolkit Integration**: Sends events to the DevOps AI Toolkit MCP remediate tool for intelligent analysis and remediation suggestions  
+- **Slack Notifications**: Rich notifications with remediation results and next steps
+- **Rate Limiting**: Prevents event storms with configurable cooldowns
+- **Status Reporting**: Comprehensive observability through status updates and Kubernetes events
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+## Prerequisites
 
-```sh
-make docker-build docker-push IMG=<some-registry>/controller-init:tag
+- **kubectl** v1.11.3+ (tested with v1.33.3)
+- **Helm** v3.0+ (tested with v3.18.4)
+- **Access to a Kubernetes cluster** v1.11.3+ (tested with v1.33.1)
+- **[DevOps AI Toolkit](https://github.com/vfarcic/dot-ai) MCP service** running and accessible from the cluster
+
+### Setting up a Test Cluster (Optional)
+
+If you don't have a Kubernetes cluster, you can create one locally using Kind:
+
+```bash
+# Use isolated kubeconfig to avoid affecting existing configuration
+export KUBECONFIG=$PWD/kubeconfig.yaml
+
+# Create test cluster
+kind create cluster --name dot-ai-controller-test
+
+# Verify cluster access
+kubectl cluster-info
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+## Installing the DevOps AI Toolkit MCP
 
-**Install the CRDs into the cluster:**
+The controller requires the DevOps AI Toolkit MCP service to be running in your cluster. Install it before deploying the controller:
 
-```sh
-make install
+### Prerequisites for MCP
+- **Anthropic API key** - Get one from [Anthropic Console](https://console.anthropic.com/)
+
+> **Note**: Check for the latest MCP version at [DevOps AI Toolkit Releases](https://github.com/vfarcic/dot-ai/releases)
+
+### Install MCP Service
+
+```bash
+# Set your Anthropic API key
+export ANTHROPIC_API_KEY="sk-ant-api03-..."
+
+# Install the DevOps AI Toolkit MCP (check for latest version at link below)
+helm install dot-ai-mcp oci://ghcr.io/vfarcic/dot-ai/charts/dot-ai:0.97.0 \
+  --set secrets.anthropic.apiKey="$ANTHROPIC_API_KEY" \
+  --create-namespace \
+  --namespace dot-ai \
+  --wait
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+### Verify MCP Installation
 
-```sh
-make deploy IMG=<some-registry>/controller-init:tag
+```bash
+# Check that MCP pods are running
+kubectl get pods -n dot-ai
+
+# Verify MCP service is accessible
+kubectl get svc -n dot-ai
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
-kubectl apply -k config/samples/
-```
-
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
-```
-
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/controller-init:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/controller-init/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v1-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+You should see the `dot-ai-mcp` service running on port 3456. The controller will use the internal service URL: `http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/tools/remediate`
