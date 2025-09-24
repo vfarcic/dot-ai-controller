@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-mcp-server
+  namespace: e2e-tests
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-mcp-server
+  template:
+    metadata:
+      labels:
+        app: mock-mcp-server
+    spec:
+      containers:
+      - name: mock-server
+        image: busybox:latest
+        ports:
+        - containerPort: 8080
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          cat > /tmp/server.sh << 'EOF'
+          #!/bin/sh
+          echo "Starting simple HTTP server on port 8080..."
+          while true; do
+            RESPONSE='{"data":{"result":"Mock remediation successful","executed":false,"commands":["kubectl describe pod"],"analysis":"Mock analysis complete"},"error":null,"meta":{"confidence":0.95,"execution_time":"0.1s","risk_level":"low"}}'
+            CONTENT_LENGTH=$(echo -n "$RESPONSE" | wc -c)
+            echo -e "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: $CONTENT_LENGTH\r\n\r\n$RESPONSE" | nc -l -p 8080 || break
+          done
+          EOF
+          chmod +x /tmp/server.sh
+          /tmp/server.sh
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-mcp-server
+  namespace: e2e-tests
+spec:
+  selector:
+    app: mock-mcp-server
+  ports:
+  - port: 3456
+    targetPort: 8080

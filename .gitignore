@@ -1,0 +1,14 @@
+.env
+kubeconfig*.yaml
+e2e-kubeconfig
+
+# Local testing files with real secrets
+tmp/
+
+# Binaries for the controller manager and generated files
+bin/
+/manager
+*.coverprofile
+
+# Kubernetes test environment
+testbin/

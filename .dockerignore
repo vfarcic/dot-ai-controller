@@ -1,0 +1,27 @@
+# Exclude everything except what we need
+*
+!go.mod
+!go.sum
+!cmd/
+!api/
+!internal/
+
+# Explicitly exclude common unnecessary files
+.git/
+.github/
+bin/
+testbin/
+tmp/
+*.md
+Dockerfile*
+.dockerignore
+.gitignore
+Makefile
+config/
+charts/
+prds/
+test/
+*.coverprofile
+kubeconfig*
+e2e-kubeconfig
+.env

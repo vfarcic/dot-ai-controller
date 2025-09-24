@@ -1,0 +1,27 @@
+# This rule is not used by the project controller-init itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants full permissions ('*') over remediation.remediation.devopstoolkit.live.
+# This role is intended for users authorized to modify roles and bindings within the cluster,
+# enabling them to delegate specific permissions to other users or groups as needed.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: controller-init
+    app.kubernetes.io/managed-by: kustomize
+  name: remediationpolicy-admin-role
+rules:
+- apiGroups:
+  - remediation.remediation.devopstoolkit.live
+  resources:
+  - remediationpolicies
+  verbs:
+  - '*'
+- apiGroups:
+  - remediation.remediation.devopstoolkit.live
+  resources:
+  - remediationpolicies/status
+  verbs:
+  - get

@@ -1,0 +1,21 @@
+apiVersion: v2
+name: dot-ai-controller
+description: A Kubernetes controller that watches cluster events and forwards them to the dot-ai MCP remediate tool for AI-powered analysis and remediation
+type: application
+version: 0.10.0
+appVersion: "v0.10.0"
+home: https://github.com/vfarcic/dot-ai-controller
+sources:
+  - https://github.com/vfarcic/dot-ai-controller
+maintainers:
+  - name: Viktor Farcic
+    url: https://github.com/vfarcic
+keywords:
+  - kubernetes
+  - controller
+  - events
+  - remediation
+  - mcp
+  - ai
+annotations:
+  category: Infrastructure

@@ -1,0 +1,143 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-mcp-server
+  namespace: controller-init-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-mcp-server
+  template:
+    metadata:
+      labels:
+        app: mock-mcp-server
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+      - name: mock-server
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/conf.d
+          readOnly: true
+        - name: responses
+          mountPath: /usr/share/nginx/html
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        - name: var-cache
+          mountPath: /var/cache/nginx
+        - name: var-run
+          mountPath: /var/run
+      volumes:
+      - name: config
+        configMap:
+          name: mock-mcp-config
+      - name: responses
+        configMap:
+          name: mock-mcp-responses
+      - name: tmp
+        emptyDir: {}
+      - name: var-cache
+        emptyDir: {}
+      - name: var-run
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-mcp-server
+  namespace: controller-init-system
+spec:
+  selector:
+    app: mock-mcp-server
+  ports:
+  - port: 3456
+    targetPort: 80
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-mcp-config
+  namespace: controller-init-system
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        location /api/v1/tools/remediate {
+            default_type application/json;
+            add_header Content-Type application/json;
+            add_header Access-Control-Allow-Origin *;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS";
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization";
+            
+            if ($request_method = OPTIONS) {
+                return 204;
+            }
+            
+            if ($request_method = POST) {
+                return 200 /success-response.json;
+            }
+            
+            return 405 /error-response.json;
+        }
+        
+        location / {
+            return 404 '{"error": "Not Found"}';
+            add_header Content-Type application/json;
+        }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-mcp-responses
+  namespace: controller-init-system
+data:
+  success-response.json: |
+    {
+      "data": {
+        "result": "Issue has been successfully resolved with 95% confidence. The Pod scheduling issue was resolved by adding node affinity rules and updating resource requests.",
+        "executed": false,
+        "commands": [
+          "kubectl describe pod nginx-xyz -n default",
+          "kubectl get nodes -o wide",
+          "kubectl apply -f updated-deployment.yaml"
+        ],
+        "analysis": "Pod FailedScheduling detected. Analysis shows insufficient resources on current nodes. Recommended solution: Update resource requests and add node affinity."
+      },
+      "error": null,
+      "meta": {
+        "confidence": 0.95,
+        "execution_time": "2.3s",
+        "risk_level": "low"
+      }
+    }
+  error-response.json: |
+    {
+      "data": null,
+      "error": {
+        "code": "ANALYSIS_FAILED",
+        "message": "Unable to analyze the provided issue context",
+        "details": "Insufficient event information provided"
+      },
+      "meta": {
+        "execution_time": "0.1s"
+      }
+    }
