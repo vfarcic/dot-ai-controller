@@ -69,6 +69,9 @@ jobs:
     - name: Calculate Next Version
       id: version
       run: |
+        # Ensure we have all tags
+        git fetch --tags
+        
         # Get the latest tag, default to v0.0.0 if no tags exist
         latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
         echo "Latest tag: $latest_tag"
@@ -76,6 +79,7 @@ jobs:
         # Extract version numbers (remove 'v' prefix)
         version=${latest_tag#v}
         IFS='.' read -r major minor patch <<< "$version"
+        echo "Parsed version: major=$major, minor=$minor, patch=$patch"
         
         # Increment minor version
         minor=$((minor + 1))
@@ -84,11 +88,6 @@ jobs:
         echo "New version: $new_version"
         echo "version=$new_version" >> $GITHUB_OUTPUT
         echo "version_no_v=${new_version#v}" >> $GITHUB_OUTPUT
-
-    - name: Create Git Tag
-      run: |
-        git tag ${{ steps.version.outputs.version }}
-        git push origin ${{ steps.version.outputs.version }}
 
     - name: Generate Manifests and Copy CRD
       run: |
@@ -122,6 +121,11 @@ jobs:
       run: |
         helm package charts/dot-ai-controller
         helm push dot-ai-controller-${{ steps.version.outputs.version_no_v }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository }}/charts
+
+    - name: Create Git Tag
+      run: |
+        git tag ${{ steps.version.outputs.version }}
+        git push origin ${{ steps.version.outputs.version }}
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
