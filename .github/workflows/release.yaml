@@ -122,16 +122,37 @@ jobs:
         git tag ${{ steps.version.outputs.version }}
         git push origin ${{ steps.version.outputs.version }}
 
-    - name: Build and Push Docker Image
+    - name: Build and Push AMD64 Image
       uses: docker/build-push-action@v5
       with:
         context: .
+        platforms: linux/amd64
         push: true
-        platforms: linux/amd64,linux/arm64
-        provenance: false
         tags: |
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-amd64
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-amd64
+
+    - name: Build and Push ARM64 Image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/arm64
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-arm64
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-arm64
+
+    - name: Create Multi-Platform Manifest
+      run: |
+        docker buildx imagetools create \
+          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-amd64 \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-arm64
+        
+        docker buildx imagetools create \
+          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-amd64 \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-arm64
 
     - name: Package and Push Helm Chart
       run: |
