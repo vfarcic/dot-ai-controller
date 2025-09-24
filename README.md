@@ -49,7 +49,7 @@ The controller requires the DevOps AI Toolkit MCP service to be running in your 
 # Set your Anthropic API key
 export ANTHROPIC_API_KEY="sk-ant-api03-..."
 
-# Set the latest version from https://github.com/vfarcic/dot-ai/pkgs/container/dot-ai%2Fcharts%2Fdot-ai
+# Set the version from https://github.com/vfarcic/dot-ai/pkgs/container/dot-ai%2Fcharts%2Fdot-ai
 export DOT_AI_VERSION="..."
 
 helm install dot-ai-mcp oci://ghcr.io/vfarcic/dot-ai/charts/dot-ai:$DOT_AI_VERSION \
@@ -76,7 +76,7 @@ You should see the `dot-ai-mcp` service running on port 3456. The controller wil
 ### Install via Helm (Recommended)
 
 ```bash
-# Set the latest version from https://github.com/vfarcic/dot-ai-controller/pkgs/container/dot-ai-controller%2Fcharts%2Fdot-ai-controller
+# Set the version from https://github.com/vfarcic/dot-ai-controller/pkgs/container/dot-ai-controller%2Fcharts%2Fdot-ai-controller
 export DOT_AI_CONTROLLER_VERSION="..."
 
 helm install dot-ai-controller oci://ghcr.io/vfarcic/dot-ai-controller/charts/dot-ai-controller \
