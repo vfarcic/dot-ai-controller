@@ -64,6 +64,7 @@ type RemediationPolicyReconciler struct {
 // +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=remediationpolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=remediationpolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;create;update
 
 // getEventKey creates a unique key for event deduplication
 func (r *RemediationPolicyReconciler) getEventKey(event *corev1.Event) string {
