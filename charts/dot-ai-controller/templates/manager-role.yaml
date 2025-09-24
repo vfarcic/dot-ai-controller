@@ -2,7 +2,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: manager-role
+  labels:
+    {{- include "dot-ai-controller.labels" . | nindent 4 }}
+  name: {{ include "dot-ai-controller.clusterRoleName" . }}
 rules:
 - apiGroups:
   - ""

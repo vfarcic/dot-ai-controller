@@ -61,12 +61,9 @@ type RemediationPolicyReconciler struct {
 	rateLimitMu       sync.RWMutex
 }
 
-// +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=remediationpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=remediationpolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=remediationpolicies/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=remediationpolicies/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
-// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
+// +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create
 
 // getEventKey creates a unique key for event deduplication
 func (r *RemediationPolicyReconciler) getEventKey(event *corev1.Event) string {

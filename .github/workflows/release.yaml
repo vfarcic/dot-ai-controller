@@ -89,10 +89,16 @@ jobs:
         echo "version=$new_version" >> $GITHUB_OUTPUT
         echo "version_no_v=${new_version#v}" >> $GITHUB_OUTPUT
 
-    - name: Generate Manifests and Copy CRD
+    - name: Generate Manifests and Sync with Helm Chart
       run: |
         make generate manifests
+        
+        # Copy CRD to Helm chart
         cp config/crd/bases/dot-ai.devopstoolkit.live_remediationpolicies.yaml charts/dot-ai-controller/templates/crd.yaml
+        
+        # Copy and template RBAC ClusterRole to Helm chart
+        sed 's/name: manager-role/name: {{ include "dot-ai-controller.clusterRoleName" . }}/' config/rbac/role.yaml > /tmp/manager-role.yaml
+        sed '/metadata:/a\  labels:\n    {{- include "dot-ai-controller.labels" . | nindent 4 }}' /tmp/manager-role.yaml > charts/dot-ai-controller/templates/manager-role.yaml
 
     - name: Update Helm Chart Version
       run: |
@@ -103,7 +109,7 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add charts/dot-ai-controller/Chart.yaml charts/dot-ai-controller/templates/crd.yaml
+        git add -A
         git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
         git push
 

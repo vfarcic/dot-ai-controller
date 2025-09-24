@@ -8,48 +8,6 @@ metadata:
     {{- include "dot-ai-controller.labels" . | nindent 4 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: {{ include "dot-ai-controller.clusterRoleName" . }}
-  labels:
-    {{- include "dot-ai-controller.labels" . | nindent 4 }}
-rules:
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - dot-ai.devopstoolkit.live
-  resources:
-  - remediationpolicies
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - dot-ai.devopstoolkit.live
-  resources:
-  - remediationpolicies/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - dot-ai.devopstoolkit.live
-  resources:
-  - remediationpolicies/status
-  verbs:
-  - get
-  - patch
-  - update
----
-apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: {{ include "dot-ai-controller.clusterRoleBindingName" . }}
