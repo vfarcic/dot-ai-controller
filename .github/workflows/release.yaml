@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - feature/prd-1-kubernetes-event-watcher-controller  # TEMPORARY for testing
   pull_request:
     branches:
       - main
