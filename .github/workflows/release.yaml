@@ -123,36 +123,30 @@ jobs:
         git push origin ${{ steps.version.outputs.version }}
 
     - name: Build and Push AMD64 Image
+      id: build-amd64
       uses: docker/build-push-action@v5
       with:
         context: .
         platforms: linux/amd64
         push: true
-        tags: |
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-amd64
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-amd64
+        outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
 
     - name: Build and Push ARM64 Image
+      id: build-arm64
       uses: docker/build-push-action@v5
       with:
         context: .
         platforms: linux/arm64
         push: true
-        tags: |
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-arm64
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-arm64
+        outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
 
     - name: Create Multi-Platform Manifest
       run: |
         docker buildx imagetools create \
           --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} \
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-amd64 \
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-arm64
-        
-        docker buildx imagetools create \
           --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-amd64 \
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-arm64
+          ${{ steps.build-amd64.outputs.digest }} \
+          ${{ steps.build-arm64.outputs.digest }}
 
     - name: Package and Push Helm Chart
       run: |
