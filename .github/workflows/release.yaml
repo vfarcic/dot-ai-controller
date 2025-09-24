@@ -75,8 +75,8 @@ jobs:
         # Ensure we have all tags
         git fetch --tags
         
-        # Get the latest tag, default to v0.0.0 if no tags exist
-        latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+        # Get the latest tag from all tags, not just those reachable from current commit
+        latest_tag=$(git tag --sort=-version:refname | head -n1 || echo "v0.0.0")
         echo "Latest tag: $latest_tag"
         
         # Extract version numbers (remove 'v' prefix)
