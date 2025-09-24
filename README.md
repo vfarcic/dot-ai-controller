@@ -374,3 +374,4 @@ This removes all resources, namespaces, and applications at once.
 ## Troubleshooting
 
 For common issues and solutions, see the [Troubleshooting Guide](docs/troubleshooting.md).
+
