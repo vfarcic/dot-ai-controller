@@ -102,7 +102,7 @@ The controller should be running and processing Kubernetes events. You'll see lo
 Create a RemediationPolicy to start processing events:
 
 ```bash
-# Set your Slack webhook URL (optional)
+# Set your Slack webhook URL (optional) - see below for setup instructions
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
 
 # Apply the policy directly
@@ -145,10 +145,10 @@ spec:
     eventsPerMinute: 5                # Lower rate for production safety
     cooldownMinutes: 15               # Longer cooldown to prevent spam
   
-  # Slack notifications configuration (DISABLED by default for safety)
+  # Slack notifications configuration (set enabled: false if you don't want Slack notifications)
   notifications:
     slack:
-      enabled: false                   # Enable Slack notifications
+      enabled: true                    # Set to false if you don't want/need Slack notifications
       webhookUrl: "$SLACK_WEBHOOK_URL" # Replace with your actual webhook URL
       channel: "#tests"                # Channel where notifications will be sent
       notifyOnStart: true              # Notify when remediation starts
@@ -158,6 +158,29 @@ EOF
 # Verify the policy was created
 kubectl get remediationpolicies --namespace dot-ai
 ```
+
+### Setting up Slack Webhook (Optional)
+
+To receive Slack notifications, you'll need to create a webhook URL:
+
+1. **Go to your Slack workspace** and navigate to [Slack Apps](https://api.slack.com/apps)
+2. **Create a new app**:
+   - Click "Create New App" 
+   - Choose "From scratch"
+   - Enter app name (e.g., "DevOps AI Controller")
+   - Select your workspace
+3. **Enable Incoming Webhooks**:
+   - Go to "Incoming Webhooks" in the left sidebar
+   - Toggle "Activate Incoming Webhooks" to On
+4. **Create a webhook**:
+   - Click "Add New Webhook to Workspace"
+   - Select the channel where you want notifications (e.g., #alerts, #devops)
+   - Click "Allow"
+5. **Copy the webhook URL**:
+   - You'll see a URL like `https://hooks.slack.com/services/YOUR/WEBHOOK/URL`
+   - Use this as your `SLACK_WEBHOOK_URL` in the policy above
+
+**Note**: If you don't want Slack notifications, simply set `enabled: false` in the notifications section above.
 
 ## Test the RemediationPolicy
 
