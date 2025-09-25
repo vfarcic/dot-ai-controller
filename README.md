@@ -193,14 +193,14 @@ spec:
     spec:
       containers:
       - name: app
-        image: nginx:alpine
+        image: alpine
         command: ["/bin/sh"]
         args: ["-c", "dd if=/dev/zero of=/tmp/memory.tmp bs=1M count=200; sleep 3600"]
         resources:
           limits:
-            memory: "64Gi"
+            memory: "64Mi"
           requests:
-            memory: "32Gi"
+            memory: "32Mi"
 EOF
 
 # Check the pod status (should show OOMKilled restarts)
