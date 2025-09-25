@@ -193,7 +193,7 @@ spec:
     spec:
       containers:
       - name: app
-        image: alpine
+        image: ghcr.io/distroless/busybox:latest
         command: ["/bin/sh"]
         args: ["-c", "dd if=/dev/zero of=/tmp/memory.tmp bs=1M count=200; sleep 3600"]
         resources:
