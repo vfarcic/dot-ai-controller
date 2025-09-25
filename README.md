@@ -198,9 +198,9 @@ spec:
         args: ["-c", "dd if=/dev/zero of=/tmp/memory.tmp bs=1M count=200; sleep 3600"]
         resources:
           limits:
-            memory: "64Mi"
+            memory: "64Gi"
           requests:
-            memory: "32Mi"
+            memory: "32Gi"
 EOF
 
 # Check the pod status (should show OOMKilled restarts)
