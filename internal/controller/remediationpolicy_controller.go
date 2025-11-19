@@ -969,18 +969,19 @@ type SlackBlockText struct {
 
 // SlackBlockElement represents an element in a Block Kit block
 type SlackBlockElement struct {
-	Type string          `json:"type"`
-	Text *SlackBlockText `json:"text,omitempty"`
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
 }
 
 // SlackAttachment represents a Slack message attachment for rich formatting (legacy)
 type SlackAttachment struct {
-	Color     string       `json:"color"`
-	Title     string       `json:"title"`
-	Text      string       `json:"text"`
-	Fields    []SlackField `json:"fields"`
-	Footer    string       `json:"footer"`
-	Timestamp int64        `json:"ts"`
+	Color     string       `json:"color,omitempty"`
+	Title     string       `json:"title,omitempty"`
+	Text      string       `json:"text,omitempty"`
+	Fields    []SlackField `json:"fields,omitempty"`
+	Footer    string       `json:"footer,omitempty"`
+	Timestamp int64        `json:"ts,omitempty"`
+	Blocks    []SlackBlock `json:"blocks,omitempty"`
 }
 
 // SlackField represents a field in a Slack attachment (legacy)
@@ -1058,12 +1059,13 @@ func (r *RemediationPolicyReconciler) sendSlackNotification(ctx context.Context,
 // createSlackMessage creates a formatted Slack message using Block Kit
 func (r *RemediationPolicyReconciler) createSlackMessage(policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event, notificationType string, mcpRequest *dotaiv1alpha1.McpRequest, mcpResponse *McpResponse) SlackMessage {
 	var blocks []SlackBlock
-	var title, emoji string
+	var title, emoji, color string
 
 	switch notificationType {
 	case "start":
 		emoji = "🔄"
 		title = "Remediation Started"
+		color = "warning" // Orange/brown vertical bar
 		blocks = r.createStartBlocks(emoji, title, policy, event, mcpRequest)
 
 	case "complete":
@@ -1072,13 +1074,16 @@ func (r *RemediationPolicyReconciler) createSlackMessage(policy *dotaiv1alpha1.R
 			if executed {
 				emoji = "✅"
 				title = "Remediation Completed Successfully"
+				color = "good" // Green vertical bar (automatic execution)
 			} else {
 				emoji = "📋"
 				title = "Analysis Completed - Manual Action Required"
+				color = "#0073e6" // Blue vertical bar (manual mode)
 			}
 		} else {
 			emoji = "❌"
 			title = "Remediation Failed"
+			color = "danger" // Red vertical bar
 		}
 		blocks = r.createCompleteBlocks(emoji, title, policy, event, mcpRequest, mcpResponse)
 	}
@@ -1086,7 +1091,13 @@ func (r *RemediationPolicyReconciler) createSlackMessage(policy *dotaiv1alpha1.R
 	message := SlackMessage{
 		Username:  "dot-ai-controller",
 		IconEmoji: ":robot_face:",
-		Blocks:    blocks,
+		// Put blocks inside attachment with color for the vertical bar
+		Attachments: []SlackAttachment{
+			{
+				Color:  color,
+				Blocks: blocks,
+			},
+		},
 	}
 
 	// Set channel if configured
@@ -1136,10 +1147,7 @@ func (r *RemediationPolicyReconciler) createStartBlocks(emoji, title string, pol
 			Elements: []SlackBlockElement{
 				{
 					Type: "mrkdwn",
-					Text: &SlackBlockText{
-						Type: "mrkdwn",
-						Text: fmt.Sprintf("Policy: `%s` | dot-ai Kubernetes Event Controller", policy.Name),
-					},
+					Text: fmt.Sprintf("Policy: `%s` | dot-ai Kubernetes Event Controller", policy.Name),
 				},
 			},
 		},
@@ -1215,10 +1223,7 @@ func (r *RemediationPolicyReconciler) createCompleteBlocks(emoji, title string, 
 		Elements: []SlackBlockElement{
 			{
 				Type: "mrkdwn",
-				Text: &SlackBlockText{
-					Type: "mrkdwn",
-					Text: fmt.Sprintf("Policy: `%s` | dot-ai Kubernetes Event Controller", policy.Name),
-				},
+				Text: fmt.Sprintf("Policy: `%s` | dot-ai Kubernetes Event Controller", policy.Name),
 			},
 		},
 	})
