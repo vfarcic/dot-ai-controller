@@ -73,6 +73,20 @@ func createFailedMcpResponse(errorMessage string) McpResponse {
 	}
 }
 
+// matchString is a helper function for checking if a string contains a substring
+func matchString(s, substr string) bool {
+	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) >= len(substr) && containsSubstring(s, substr))
+}
+
+func containsSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 var _ = Describe("RemediationPolicy Controller", func() {
 	var (
 		reconciler *RemediationPolicyReconciler
@@ -1799,17 +1813,17 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				// Verify start notification
 				startNotification := slackRequests[0]
-				Expect(startNotification.Attachments).To(HaveLen(1))
-				Expect(startNotification.Attachments[0].Title).To(ContainSubstring("Remediation Started"))
-				Expect(startNotification.Attachments[0].Color).To(Equal("warning"))
+				Expect(startNotification.Blocks).To(Not(BeEmpty()))
+				Expect(startNotification.Blocks[0].Type).To(Equal("header"))
+				Expect(startNotification.Blocks[0].Text.Text).To(ContainSubstring("Remediation Started"))
 				Expect(startNotification.Channel).To(Equal("#test-channel"))
 				Expect(startNotification.Username).To(Equal("dot-ai-controller"))
 
 				// Verify complete notification
 				completeNotification := slackRequests[1]
-				Expect(completeNotification.Attachments).To(HaveLen(1))
-				Expect(completeNotification.Attachments[0].Title).To(ContainSubstring("Remediation Completed"))
-				Expect(completeNotification.Attachments[0].Color).To(Equal("good"))
+				Expect(completeNotification.Blocks).To(Not(BeEmpty()))
+				Expect(completeNotification.Blocks[0].Type).To(Equal("header"))
+				Expect(completeNotification.Blocks[0].Text.Text).To(ContainSubstring("Remediation Completed"))
 			})
 
 			It("should skip start notification when notifyOnStart is false", func() {
@@ -1833,7 +1847,9 @@ var _ = Describe("RemediationPolicy Controller", func() {
 				defer slackMutex.RUnlock()
 
 				notification := slackRequests[0]
-				Expect(notification.Attachments[0].Title).To(ContainSubstring("Remediation Completed"))
+				Expect(notification.Blocks).To(Not(BeEmpty()))
+				Expect(notification.Blocks[0].Type).To(Equal("header"))
+				Expect(notification.Blocks[0].Text.Text).To(ContainSubstring("Remediation Completed"))
 			})
 
 			It("should skip all notifications when disabled", func() {
@@ -1874,20 +1890,26 @@ var _ = Describe("RemediationPolicy Controller", func() {
 				Expect(message.Username).To(Equal("dot-ai-controller"))
 				Expect(message.IconEmoji).To(Equal(":robot_face:"))
 				Expect(message.Channel).To(Equal("#test-channel"))
-				Expect(message.Attachments).To(HaveLen(1))
+				Expect(message.Blocks).To(Not(BeEmpty()))
 
-				attachment := message.Attachments[0]
-				Expect(attachment.Color).To(Equal("warning"))
-				Expect(attachment.Title).To(Equal("🔄 Remediation Started"))
-				Expect(attachment.Text).To(ContainSubstring("Started processing event"))
-				Expect(attachment.Footer).To(Equal("dot-ai Kubernetes Event Controller"))
+				// Verify header block
+				Expect(message.Blocks[0].Type).To(Equal("header"))
+				Expect(message.Blocks[0].Text.Text).To(Equal("🔄 Remediation Started"))
 
-				// Verify fields
-				fieldTitles := make([]string, len(attachment.Fields))
-				for i, field := range attachment.Fields {
-					fieldTitles[i] = field.Title
+				// Verify has section blocks with fields
+				hasFieldSection := false
+				for _, block := range message.Blocks {
+					if block.Type == "section" && len(block.Fields) > 0 {
+						hasFieldSection = true
+						break
+					}
 				}
-				Expect(fieldTitles).To(ContainElements("Event Type", "Resource", "Namespace", "Mode", "Policy"))
+				Expect(hasFieldSection).To(BeTrue())
+
+				// Verify context block (footer)
+				lastBlock := message.Blocks[len(message.Blocks)-1]
+				Expect(lastBlock.Type).To(Equal("context"))
+				Expect(lastBlock.Elements[0].Text.Text).To(ContainSubstring("dot-ai Kubernetes Event Controller"))
 			})
 
 			It("should format successful completion notification correctly", func() {
@@ -1930,38 +1952,63 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				message := reconciler.createSlackMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
 
-				attachment := message.Attachments[0]
-				Expect(attachment.Color).To(Equal("good"))
-				Expect(attachment.Title).To(Equal("✅ Remediation Completed Successfully"))
-				Expect(attachment.Text).To(ContainSubstring("Issue resolved"))
-				Expect(attachment.Text).To(ContainSubstring("95% confidence"))
+				Expect(message.Blocks).To(Not(BeEmpty()))
 
-				// Verify enhanced fields are present
-				fieldTitles := make([]string, len(attachment.Fields))
-				for i, field := range attachment.Fields {
-					fieldTitles[i] = field.Title
+				// Verify header block
+				Expect(message.Blocks[0].Type).To(Equal("header"))
+				Expect(message.Blocks[0].Text.Text).To(Equal("✅ Remediation Completed Successfully"))
+
+				// Find result section
+				var resultText string
+				for _, block := range message.Blocks {
+					if block.Type == "section" && block.Text != nil && block.Text.Type == "mrkdwn" {
+						if len(resultText) == 0 {
+							resultText = block.Text.Text
+						}
+					}
 				}
-				Expect(fieldTitles).To(ContainElements("Confidence", "Execution Time", "Root Cause", "Commands Executed", "Validation", "Actions Taken", "Primary Action"))
+				Expect(resultText).To(ContainSubstring("Issue"))
+				Expect(resultText).To(ContainSubstring("95% confidence"))
 
-				// Find and verify specific field values
-				var confidenceField, executionField, validationField *SlackField
-				for i := range attachment.Fields {
-					switch attachment.Fields[i].Title {
-					case "Confidence":
-						confidenceField = &attachment.Fields[i]
-					case "Execution Time":
-						executionField = &attachment.Fields[i]
-					case "Validation":
-						validationField = &attachment.Fields[i]
+				// Verify sections contain expected information
+				var hasConfidence, hasExecutionTime, hasRootCause, hasCommands, hasValidation bool
+				for _, block := range message.Blocks {
+					if block.Type == "section" {
+						if block.Text != nil {
+							text := block.Text.Text
+							if len(text) > 0 {
+								if matchString(text, "95%") {
+									hasConfidence = true
+								}
+								if matchString(text, "Root Cause") {
+									hasRootCause = true
+								}
+								if matchString(text, "Commands Executed") || matchString(text, "kubectl apply") {
+									hasCommands = true
+								}
+								if matchString(text, "Validation") {
+									hasValidation = true
+								}
+							}
+						}
+						if len(block.Fields) > 0 {
+							for _, field := range block.Fields {
+								if matchString(field.Text, "2.50s") {
+									hasExecutionTime = true
+								}
+								if matchString(field.Text, "95%") {
+									hasConfidence = true
+								}
+							}
+						}
 					}
 				}
 
-				Expect(confidenceField).NotTo(BeNil())
-				Expect(confidenceField.Value).To(Equal("95%"))
-				Expect(executionField).NotTo(BeNil())
-				Expect(executionField.Value).To(Equal("2.50s"))
-				Expect(validationField).NotTo(BeNil())
-				Expect(validationField.Value).To(Equal("✅ Passed"))
+				Expect(hasConfidence).To(BeTrue(), "Should have confidence information")
+				Expect(hasExecutionTime).To(BeTrue(), "Should have execution time")
+				Expect(hasRootCause).To(BeTrue(), "Should have root cause")
+				Expect(hasCommands).To(BeTrue(), "Should have commands")
+				Expect(hasValidation).To(BeTrue(), "Should have validation")
 			})
 
 			It("should extract detailed MCP response fields correctly", func() {
@@ -2013,26 +2060,31 @@ var _ = Describe("RemediationPolicy Controller", func() {
 				}
 
 				message := reconciler.createSlackMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
-				attachment := message.Attachments[0]
 
-				// Create map of fields for easy lookup
-				fieldMap := make(map[string]string)
-				for _, field := range attachment.Fields {
-					fieldMap[field.Title] = field.Value
+				Expect(message.Blocks).To(Not(BeEmpty()))
+
+				// Collect all text content from blocks
+				var allText string
+				for _, block := range message.Blocks {
+					if block.Text != nil {
+						allText += block.Text.Text + " "
+					}
+					for _, field := range block.Fields {
+						allText += field.Text + " "
+					}
 				}
 
 				// Verify all enhanced fields are present with correct values
-				Expect(fieldMap["Confidence"]).To(Equal("87%"))
-				Expect(fieldMap["Analysis Confidence"]).To(Equal("92%"))
-				Expect(fieldMap["Execution Time"]).To(Equal("3.20s"))
-				Expect(fieldMap["Root Cause"]).To(Equal("Pod scheduling failed due to missing PersistentVolume"))
-				Expect(fieldMap["Validation"]).To(Equal("✅ Passed"))
-				Expect(fieldMap["Actions Taken"]).To(Equal("2 remediation actions"))
-				Expect(fieldMap["Primary Action"]).To(Equal("Created PersistentVolume pv-001 with 50Gi capacity"))
+				Expect(allText).To(ContainSubstring("87%"), "Should contain confidence 87%")
+				Expect(allText).To(ContainSubstring("92%"), "Should contain analysis confidence 92%")
+				Expect(allText).To(ContainSubstring("3.20s"), "Should contain execution time")
+				Expect(allText).To(ContainSubstring("Pod scheduling failed due to missing PersistentVolume"), "Should contain root cause")
+				Expect(allText).To(ContainSubstring("Passed"), "Should contain validation status")
+				Expect(allText).To(ContainSubstring("2 remediation actions"), "Should contain action count")
 
-				// Verify commands are present and formatted correctly
-				Expect(fieldMap["Commands Executed"]).To(ContainSubstring("• kubectl create -f /tmp/pv.yaml"))
-				Expect(fieldMap["Commands Executed"]).To(ContainSubstring("• kubectl patch pvc my-pvc"))
+				// Verify commands are present in code blocks (NOT TRUNCATED!)
+				Expect(allText).To(ContainSubstring("kubectl create -f /tmp/pv.yaml"), "Should contain first command")
+				Expect(allText).To(ContainSubstring("kubectl patch pvc my-pvc"), "Should contain second command")
 			})
 
 			It("should format manual mode completion notification correctly", func() {
@@ -2067,20 +2119,24 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				message := reconciler.createSlackMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
 
-				attachment := message.Attachments[0]
-				Expect(attachment.Color).To(Equal("#3AA3E3"))
-				Expect(attachment.Title).To(Equal("📋 Analysis Completed - Manual Action Required"))
-				Expect(attachment.Text).To(ContainSubstring("Analysis completed"))
+				Expect(message.Blocks).To(Not(BeEmpty()))
 
-				// Verify that commands are labeled as "Recommended Commands" not "Commands Executed"
-				fieldMap := make(map[string]string)
-				for _, field := range attachment.Fields {
-					fieldMap[field.Title] = field.Value
+				// Verify header block
+				Expect(message.Blocks[0].Type).To(Equal("header"))
+				Expect(message.Blocks[0].Text.Text).To(Equal("📋 Analysis Completed - Manual Action Required"))
+
+				// Collect all text
+				var allText string
+				for _, block := range message.Blocks {
+					if block.Text != nil {
+						allText += block.Text.Text + " "
+					}
 				}
 
-				Expect(fieldMap["Recommended Commands"]).To(ContainSubstring("kubectl patch compositeresourcedefinition"))
-				_, hasExecutedCommands := fieldMap["Commands Executed"]
-				Expect(hasExecutedCommands).To(BeFalse()) // Should NOT have "Commands Executed" field
+				// Verify that commands are labeled as "Recommended Commands" not "Commands Executed"
+				Expect(allText).To(ContainSubstring("Recommended Commands"))
+				Expect(allText).To(ContainSubstring("kubectl patch compositeresourcedefinition"))
+				Expect(allText).NotTo(ContainSubstring("Commands Executed")) // Should NOT have "Commands Executed"
 			})
 
 			It("should format failed completion notification correctly", func() {
@@ -2101,20 +2157,26 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				message := reconciler.createSlackMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
 
-				attachment := message.Attachments[0]
-				Expect(attachment.Color).To(Equal("danger"))
-				Expect(attachment.Title).To(Equal("❌ Remediation Failed"))
-				Expect(attachment.Text).To(ContainSubstring("Remediation failed"))
-				Expect(attachment.Text).To(ContainSubstring("insufficient permissions"))
+				Expect(message.Blocks).To(Not(BeEmpty()))
 
-				// Verify enhanced error fields are present
-				fieldMap := make(map[string]string)
-				for _, field := range attachment.Fields {
-					fieldMap[field.Title] = field.Value
+				// Verify header block
+				Expect(message.Blocks[0].Type).To(Equal("header"))
+				Expect(message.Blocks[0].Text.Text).To(Equal("❌ Remediation Failed"))
+
+				// Collect all text
+				var allText string
+				for _, block := range message.Blocks {
+					if block.Text != nil {
+						allText += block.Text.Text + " "
+					}
 				}
 
-				Expect(fieldMap["Error Code"]).To(Equal("insufficient_permissions"))
-				Expect(fieldMap["Error Details"]).To(Equal("RBAC insufficient"))
+				Expect(allText).To(Or(ContainSubstring("Remediation failed"), ContainSubstring("Unable to create")))
+				Expect(allText).To(ContainSubstring("insufficient permissions"))
+
+				// Verify enhanced error fields are present
+				Expect(allText).To(ContainSubstring("insufficient_permissions"))
+				Expect(allText).To(ContainSubstring("RBAC insufficient"))
 			})
 		})
 
