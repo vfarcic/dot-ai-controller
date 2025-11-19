@@ -1065,7 +1065,7 @@ func (r *RemediationPolicyReconciler) createSlackMessage(policy *dotaiv1alpha1.R
 	case "start":
 		emoji = "🔄"
 		title = "Remediation Started"
-		color = "warning" // Orange/brown vertical bar
+		color = "#f2994a" // Orange vertical bar
 		blocks = r.createStartBlocks(emoji, title, policy, event, mcpRequest)
 
 	case "complete":
@@ -1074,7 +1074,7 @@ func (r *RemediationPolicyReconciler) createSlackMessage(policy *dotaiv1alpha1.R
 			if executed {
 				emoji = "✅"
 				title = "Remediation Completed Successfully"
-				color = "good" // Green vertical bar (automatic execution)
+				color = "#2eb67d" // Green vertical bar (automatic execution)
 			} else {
 				emoji = "📋"
 				title = "Analysis Completed - Manual Action Required"
@@ -1083,7 +1083,7 @@ func (r *RemediationPolicyReconciler) createSlackMessage(policy *dotaiv1alpha1.R
 		} else {
 			emoji = "❌"
 			title = "Remediation Failed"
-			color = "danger" // Red vertical bar
+			color = "#e01e5a" // Red vertical bar
 		}
 		blocks = r.createCompleteBlocks(emoji, title, policy, event, mcpRequest, mcpResponse)
 	}
