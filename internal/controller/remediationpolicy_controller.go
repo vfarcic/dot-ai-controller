@@ -953,18 +953,18 @@ type SlackMessage struct {
 
 // SlackBlock represents a Slack Block Kit block
 type SlackBlock struct {
-	Type     string                 `json:"type"`
-	Text     *SlackBlockText        `json:"text,omitempty"`
-	Elements []SlackBlockElement    `json:"elements,omitempty"`
-	Fields   []SlackBlockText       `json:"fields,omitempty"`
-	Accessory interface{}           `json:"accessory,omitempty"`
+	Type      string              `json:"type"`
+	Text      *SlackBlockText     `json:"text,omitempty"`
+	Elements  []SlackBlockElement `json:"elements,omitempty"`
+	Fields    []SlackBlockText    `json:"fields,omitempty"`
+	Accessory interface{}         `json:"accessory,omitempty"`
 }
 
 // SlackBlockText represents text in a Block Kit block
 type SlackBlockText struct {
-	Type string `json:"type"` // "plain_text" or "mrkdwn"
-	Text string `json:"text"`
-	Emoji *bool `json:"emoji,omitempty"`
+	Type  string `json:"type"` // "plain_text" or "mrkdwn"
+	Text  string `json:"text"`
+	Emoji *bool  `json:"emoji,omitempty"`
 }
 
 // SlackBlockElement represents an element in a Block Kit block
