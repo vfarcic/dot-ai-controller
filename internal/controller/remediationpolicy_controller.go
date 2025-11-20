@@ -1303,6 +1303,18 @@ func (r *RemediationPolicyReconciler) createMcpDetailBlocks(mcpResponse *McpResp
 
 				// Add each command in its own code block - NO TRUNCATION
 				for i, action := range actions {
+					// Slack recommends max 50 blocks per message - enforce 10 command limit
+					if i >= 10 {
+						blocks = append(blocks, SlackBlock{
+							Type: "section",
+							Text: &SlackBlockText{
+								Type: "mrkdwn",
+								Text: fmt.Sprintf("_... and %d more commands_", len(actions)-10),
+							},
+						})
+						break
+					}
+
 					if actionMap, ok := action.(map[string]interface{}); ok {
 						if cmd, ok := actionMap["command"].(string); ok && cmd != "" {
 							blocks = append(blocks, SlackBlock{
@@ -1313,17 +1325,6 @@ func (r *RemediationPolicyReconciler) createMcpDetailBlocks(mcpResponse *McpResp
 								},
 							})
 						}
-					}
-					// Slack recommends max 50 blocks per message
-					if i >= 10 {
-						blocks = append(blocks, SlackBlock{
-							Type: "section",
-							Text: &SlackBlockText{
-								Type: "mrkdwn",
-								Text: fmt.Sprintf("_... and %d more commands_", len(actions)-10),
-							},
-						})
-						break
 					}
 				}
 			}

@@ -49,8 +49,10 @@ The controller requires the DevOps AI Toolkit MCP service to be running in your 
 # Set your Anthropic API key
 export ANTHROPIC_API_KEY="sk-ant-api03-..."
 
-# Install the DevOps AI Toolkit MCP (check for latest version at link below)
-helm install dot-ai-mcp oci://ghcr.io/vfarcic/dot-ai/charts/dot-ai:0.97.0 \
+# Set the version from https://github.com/vfarcic/dot-ai/pkgs/container/dot-ai%2Fcharts%2Fdot-ai
+export DOT_AI_VERSION="..."
+
+helm install dot-ai-mcp oci://ghcr.io/vfarcic/dot-ai/charts/dot-ai:$DOT_AI_VERSION \
   --set secrets.anthropic.apiKey="$ANTHROPIC_API_KEY" \
   --create-namespace \
   --namespace dot-ai \
@@ -74,14 +76,14 @@ You should see the `dot-ai-mcp` service running on port 3456. The controller wil
 ### Install via Helm (Recommended)
 
 ```bash
-# Install the controller from OCI registry (check for latest version at link below)
+# Set the version from https://github.com/vfarcic/dot-ai-controller/pkgs/container/dot-ai-controller%2Fcharts%2Fdot-ai-controller
+export DOT_AI_CONTROLLER_VERSION="..."
+
 helm install dot-ai-controller oci://ghcr.io/vfarcic/dot-ai-controller/charts/dot-ai-controller \
-  --version 0.9.0 \
+  --version $DOT_AI_CONTROLLER_VERSION \
   --namespace dot-ai \
   --wait
 ```
-
-**Note**: Check for the latest controller version at [releases](https://github.com/vfarcic/dot-ai-controller/releases) and update the `--version` parameter accordingly.
 
 ### Verify Controller Installation
 
@@ -191,7 +193,7 @@ spec:
     spec:
       containers:
       - name: app
-        image: nginx:alpine
+        image: ghcr.io/distroless/busybox:latest
         command: ["/bin/sh"]
         args: ["-c", "dd if=/dev/zero of=/tmp/memory.tmp bs=1M count=200; sleep 3600"]
         resources:

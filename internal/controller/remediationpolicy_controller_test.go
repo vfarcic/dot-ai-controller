@@ -75,16 +75,10 @@ func createFailedMcpResponse(errorMessage string) McpResponse {
 
 // matchString is a helper function for checking if a string contains a substring
 func matchString(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) >= len(substr) && containsSubstring(s, substr))
-}
-
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+	if s == "" || substr == "" {
+		return false
 	}
-	return false
+	return strings.Contains(s, substr)
 }
 
 var _ = Describe("RemediationPolicy Controller", func() {
@@ -1813,17 +1807,20 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				// Verify start notification
 				startNotification := slackRequests[0]
-				Expect(startNotification.Blocks).To(Not(BeEmpty()))
-				Expect(startNotification.Blocks[0].Type).To(Equal("header"))
-				Expect(startNotification.Blocks[0].Text.Text).To(ContainSubstring("Remediation Started"))
+				Expect(startNotification.Attachments).To(HaveLen(1))
+				Expect(startNotification.Attachments[0].Color).To(Equal("#f2994a")) // Orange for start
+				Expect(startNotification.Attachments[0].Blocks).To(Not(BeEmpty()))
+				Expect(startNotification.Attachments[0].Blocks[0].Type).To(Equal("header"))
+				Expect(startNotification.Attachments[0].Blocks[0].Text.Text).To(ContainSubstring("Remediation Started"))
 				Expect(startNotification.Channel).To(Equal("#test-channel"))
 				Expect(startNotification.Username).To(Equal("dot-ai-controller"))
 
 				// Verify complete notification
 				completeNotification := slackRequests[1]
-				Expect(completeNotification.Blocks).To(Not(BeEmpty()))
-				Expect(completeNotification.Blocks[0].Type).To(Equal("header"))
-				Expect(completeNotification.Blocks[0].Text.Text).To(ContainSubstring("Remediation Completed"))
+				Expect(completeNotification.Attachments).To(HaveLen(1))
+				Expect(completeNotification.Attachments[0].Blocks).To(Not(BeEmpty()))
+				Expect(completeNotification.Attachments[0].Blocks[0].Type).To(Equal("header"))
+				Expect(completeNotification.Attachments[0].Blocks[0].Text.Text).To(ContainSubstring("Remediation Completed"))
 			})
 
 			It("should skip start notification when notifyOnStart is false", func() {
@@ -1847,9 +1844,10 @@ var _ = Describe("RemediationPolicy Controller", func() {
 				defer slackMutex.RUnlock()
 
 				notification := slackRequests[0]
-				Expect(notification.Blocks).To(Not(BeEmpty()))
-				Expect(notification.Blocks[0].Type).To(Equal("header"))
-				Expect(notification.Blocks[0].Text.Text).To(ContainSubstring("Remediation Completed"))
+				Expect(notification.Attachments).To(HaveLen(1))
+				Expect(notification.Attachments[0].Blocks).To(Not(BeEmpty()))
+				Expect(notification.Attachments[0].Blocks[0].Type).To(Equal("header"))
+				Expect(notification.Attachments[0].Blocks[0].Text.Text).To(ContainSubstring("Remediation Completed"))
 			})
 
 			It("should skip all notifications when disabled", func() {
@@ -1890,15 +1888,19 @@ var _ = Describe("RemediationPolicy Controller", func() {
 				Expect(message.Username).To(Equal("dot-ai-controller"))
 				Expect(message.IconEmoji).To(Equal(":robot_face:"))
 				Expect(message.Channel).To(Equal("#test-channel"))
-				Expect(message.Blocks).To(Not(BeEmpty()))
+				Expect(message.Attachments).To(HaveLen(1))
+				Expect(message.Attachments[0].Color).To(Equal("#f2994a")) // Orange for start
+				Expect(message.Attachments[0].Blocks).To(Not(BeEmpty()))
+
+				blocks := message.Attachments[0].Blocks
 
 				// Verify header block
-				Expect(message.Blocks[0].Type).To(Equal("header"))
-				Expect(message.Blocks[0].Text.Text).To(Equal("🔄 Remediation Started"))
+				Expect(blocks[0].Type).To(Equal("header"))
+				Expect(blocks[0].Text.Text).To(Equal("🔄 Remediation Started"))
 
 				// Verify has section blocks with fields
 				hasFieldSection := false
-				for _, block := range message.Blocks {
+				for _, block := range blocks {
 					if block.Type == "section" && len(block.Fields) > 0 {
 						hasFieldSection = true
 						break
@@ -1907,9 +1909,9 @@ var _ = Describe("RemediationPolicy Controller", func() {
 				Expect(hasFieldSection).To(BeTrue())
 
 				// Verify context block (footer)
-				lastBlock := message.Blocks[len(message.Blocks)-1]
+				lastBlock := blocks[len(blocks)-1]
 				Expect(lastBlock.Type).To(Equal("context"))
-				Expect(lastBlock.Elements[0].Text.Text).To(ContainSubstring("dot-ai Kubernetes Event Controller"))
+				Expect(lastBlock.Elements[0].Text).To(ContainSubstring("dot-ai Kubernetes Event Controller"))
 			})
 
 			It("should format successful completion notification correctly", func() {
@@ -1952,15 +1954,19 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				message := reconciler.createSlackMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
 
-				Expect(message.Blocks).To(Not(BeEmpty()))
+				Expect(message.Attachments).To(HaveLen(1))
+				Expect(message.Attachments[0].Color).To(Equal("#2eb67d")) // Green for success
+				Expect(message.Attachments[0].Blocks).To(Not(BeEmpty()))
+
+				blocks := message.Attachments[0].Blocks
 
 				// Verify header block
-				Expect(message.Blocks[0].Type).To(Equal("header"))
-				Expect(message.Blocks[0].Text.Text).To(Equal("✅ Remediation Completed Successfully"))
+				Expect(blocks[0].Type).To(Equal("header"))
+				Expect(blocks[0].Text.Text).To(Equal("✅ Remediation Completed Successfully"))
 
 				// Find result section
 				var resultText string
-				for _, block := range message.Blocks {
+				for _, block := range blocks {
 					if block.Type == "section" && block.Text != nil && block.Text.Type == "mrkdwn" {
 						if len(resultText) == 0 {
 							resultText = block.Text.Text
@@ -1972,7 +1978,7 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				// Verify sections contain expected information
 				var hasConfidence, hasExecutionTime, hasRootCause, hasCommands, hasValidation bool
-				for _, block := range message.Blocks {
+				for _, block := range blocks {
 					if block.Type == "section" {
 						if block.Text != nil {
 							text := block.Text.Text
@@ -2061,11 +2067,14 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				message := reconciler.createSlackMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
 
-				Expect(message.Blocks).To(Not(BeEmpty()))
+				Expect(message.Attachments).To(HaveLen(1))
+				Expect(message.Attachments[0].Blocks).To(Not(BeEmpty()))
+
+				blocks := message.Attachments[0].Blocks
 
 				// Collect all text content from blocks
 				var allText string
-				for _, block := range message.Blocks {
+				for _, block := range blocks {
 					if block.Text != nil {
 						allText += block.Text.Text + " "
 					}
@@ -2119,15 +2128,19 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				message := reconciler.createSlackMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
 
-				Expect(message.Blocks).To(Not(BeEmpty()))
+				Expect(message.Attachments).To(HaveLen(1))
+				Expect(message.Attachments[0].Color).To(Equal("#0073e6")) // Blue for manual mode
+				Expect(message.Attachments[0].Blocks).To(Not(BeEmpty()))
+
+				blocks := message.Attachments[0].Blocks
 
 				// Verify header block
-				Expect(message.Blocks[0].Type).To(Equal("header"))
-				Expect(message.Blocks[0].Text.Text).To(Equal("📋 Analysis Completed - Manual Action Required"))
+				Expect(blocks[0].Type).To(Equal("header"))
+				Expect(blocks[0].Text.Text).To(Equal("📋 Analysis Completed - Manual Action Required"))
 
 				// Collect all text
 				var allText string
-				for _, block := range message.Blocks {
+				for _, block := range blocks {
 					if block.Text != nil {
 						allText += block.Text.Text + " "
 					}
@@ -2157,15 +2170,19 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				message := reconciler.createSlackMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
 
-				Expect(message.Blocks).To(Not(BeEmpty()))
+				Expect(message.Attachments).To(HaveLen(1))
+				Expect(message.Attachments[0].Color).To(Equal("#e01e5a")) // Red for failure
+				Expect(message.Attachments[0].Blocks).To(Not(BeEmpty()))
+
+				blocks := message.Attachments[0].Blocks
 
 				// Verify header block
-				Expect(message.Blocks[0].Type).To(Equal("header"))
-				Expect(message.Blocks[0].Text.Text).To(Equal("❌ Remediation Failed"))
+				Expect(blocks[0].Type).To(Equal("header"))
+				Expect(blocks[0].Text.Text).To(Equal("❌ Remediation Failed"))
 
 				// Collect all text
 				var allText string
-				for _, block := range message.Blocks {
+				for _, block := range blocks {
 					if block.Text != nil {
 						allText += block.Text.Text + " "
 					}
