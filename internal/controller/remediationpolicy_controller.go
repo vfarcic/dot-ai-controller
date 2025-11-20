@@ -947,8 +947,7 @@ type SlackMessage struct {
 	Channel     string            `json:"channel,omitempty"`
 	Username    string            `json:"username,omitempty"`
 	IconEmoji   string            `json:"icon_emoji,omitempty"`
-	Attachments []SlackAttachment `json:"attachments,omitempty"` // Legacy attachments (fallback)
-	Blocks      []SlackBlock      `json:"blocks,omitempty"`      // Block Kit blocks (preferred)
+	Attachments []SlackAttachment `json:"attachments,omitempty"` // Attachments with Block Kit blocks
 }
 
 // SlackBlock represents a Slack Block Kit block
