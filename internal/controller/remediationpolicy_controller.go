@@ -947,20 +947,43 @@ type SlackMessage struct {
 	Channel     string            `json:"channel,omitempty"`
 	Username    string            `json:"username,omitempty"`
 	IconEmoji   string            `json:"icon_emoji,omitempty"`
-	Attachments []SlackAttachment `json:"attachments"`
+	Attachments []SlackAttachment `json:"attachments,omitempty"` // Attachments with Block Kit blocks
 }
 
-// SlackAttachment represents a Slack message attachment for rich formatting
+// SlackBlock represents a Slack Block Kit block
+type SlackBlock struct {
+	Type      string              `json:"type"`
+	Text      *SlackBlockText     `json:"text,omitempty"`
+	Elements  []SlackBlockElement `json:"elements,omitempty"`
+	Fields    []SlackBlockText    `json:"fields,omitempty"`
+	Accessory interface{}         `json:"accessory,omitempty"`
+}
+
+// SlackBlockText represents text in a Block Kit block
+type SlackBlockText struct {
+	Type  string `json:"type"` // "plain_text" or "mrkdwn"
+	Text  string `json:"text"`
+	Emoji *bool  `json:"emoji,omitempty"`
+}
+
+// SlackBlockElement represents an element in a Block Kit block
+type SlackBlockElement struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+// SlackAttachment represents a Slack message attachment for rich formatting (legacy)
 type SlackAttachment struct {
-	Color     string       `json:"color"`
-	Title     string       `json:"title"`
-	Text      string       `json:"text"`
-	Fields    []SlackField `json:"fields"`
-	Footer    string       `json:"footer"`
-	Timestamp int64        `json:"ts"`
+	Color     string       `json:"color,omitempty"`
+	Title     string       `json:"title,omitempty"`
+	Text      string       `json:"text,omitempty"`
+	Fields    []SlackField `json:"fields,omitempty"`
+	Footer    string       `json:"footer,omitempty"`
+	Timestamp int64        `json:"ts,omitempty"`
+	Blocks    []SlackBlock `json:"blocks,omitempty"`
 }
 
-// SlackField represents a field in a Slack attachment
+// SlackField represents a field in a Slack attachment (legacy)
 type SlackField struct {
 	Title string `json:"title"`
 	Value string `json:"value"`
@@ -1032,75 +1055,48 @@ func (r *RemediationPolicyReconciler) sendSlackNotification(ctx context.Context,
 	return nil
 }
 
-// createSlackMessage creates a formatted Slack message
+// createSlackMessage creates a formatted Slack message using Block Kit
 func (r *RemediationPolicyReconciler) createSlackMessage(policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event, notificationType string, mcpRequest *dotaiv1alpha1.McpRequest, mcpResponse *McpResponse) SlackMessage {
-	var color, title, text string
-	var fields []SlackField
+	var blocks []SlackBlock
+	var title, emoji, color string
 
 	switch notificationType {
 	case "start":
-		color = "warning"
-		title = "🔄 Remediation Started"
-		text = fmt.Sprintf("Started processing event: %s", mcpRequest.Issue)
-		fields = []SlackField{
-			{Title: "Event Type", Value: fmt.Sprintf("%s/%s", event.Type, event.Reason), Short: true},
-			{Title: "Resource", Value: fmt.Sprintf("%s/%s", event.InvolvedObject.Kind, event.InvolvedObject.Name), Short: true},
-			{Title: "Namespace", Value: event.InvolvedObject.Namespace, Short: true},
-			{Title: "Mode", Value: mcpRequest.Mode, Short: true},
-			{Title: "Policy", Value: policy.Name, Short: false},
-		}
+		emoji = "🔄"
+		title = "Remediation Started"
+		color = "#f2994a" // Orange vertical bar
+		blocks = r.createStartBlocks(emoji, title, policy, event, mcpRequest)
 
 	case "complete":
 		if mcpResponse != nil && mcpResponse.Success {
-			// Check if MCP actually executed commands vs just provided recommendations
 			executed := r.getMcpExecutedStatus(mcpResponse)
 			if executed {
-				color = "good"
-				title = "✅ Remediation Completed Successfully"
-				text = fmt.Sprintf("Issue resolved: %s", mcpResponse.GetResultMessage())
+				emoji = "✅"
+				title = "Remediation Completed Successfully"
+				color = "#2eb67d" // Green vertical bar (automatic execution)
 			} else {
-				color = "#3AA3E3"
-				title = "📋 Analysis Completed - Manual Action Required"
-				text = fmt.Sprintf("Analysis completed: %s", mcpResponse.GetResultMessage())
+				emoji = "📋"
+				title = "Analysis Completed - Manual Action Required"
+				color = "#0073e6" // Blue vertical bar (manual mode)
 			}
 		} else {
-			color = "danger"
-			title = "❌ Remediation Failed"
-			if mcpResponse != nil {
-				text = fmt.Sprintf("Remediation failed: %s", mcpResponse.GetErrorMessage())
-			} else {
-				text = "Remediation failed with unknown error"
-			}
+			emoji = "❌"
+			title = "Remediation Failed"
+			color = "#e01e5a" // Red vertical bar
 		}
-
-		fields = []SlackField{
-			{Title: "Original Issue", Value: mcpRequest.Issue, Short: false},
-			{Title: "Event Type", Value: fmt.Sprintf("%s/%s", event.Type, event.Reason), Short: true},
-			{Title: "Resource", Value: fmt.Sprintf("%s/%s", event.InvolvedObject.Kind, event.InvolvedObject.Name), Short: true},
-			{Title: "Namespace", Value: event.InvolvedObject.Namespace, Short: true},
-			{Title: "Mode", Value: mcpRequest.Mode, Short: true},
-			{Title: "Policy", Value: policy.Name, Short: false},
-		}
-
-		// Add detailed MCP response information for completion notifications
-		if mcpResponse != nil {
-			r.addMcpDetailFields(&fields, mcpResponse)
-		}
-	}
-
-	attachment := SlackAttachment{
-		Color:     color,
-		Title:     title,
-		Text:      text,
-		Fields:    fields,
-		Footer:    "dot-ai Kubernetes Event Controller",
-		Timestamp: time.Now().Unix(),
+		blocks = r.createCompleteBlocks(emoji, title, policy, event, mcpRequest, mcpResponse)
 	}
 
 	message := SlackMessage{
-		Username:    "dot-ai-controller",
-		IconEmoji:   ":robot_face:",
-		Attachments: []SlackAttachment{attachment},
+		Username:  "dot-ai-controller",
+		IconEmoji: ":robot_face:",
+		// Put blocks inside attachment with color for the vertical bar
+		Attachments: []SlackAttachment{
+			{
+				Color:  color,
+				Blocks: blocks,
+			},
+		},
 	}
 
 	// Set channel if configured
@@ -1111,6 +1107,282 @@ func (r *RemediationPolicyReconciler) createSlackMessage(policy *dotaiv1alpha1.R
 	return message
 }
 
+// createStartBlocks creates Block Kit blocks for start notifications
+func (r *RemediationPolicyReconciler) createStartBlocks(emoji, title string, policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event, mcpRequest *dotaiv1alpha1.McpRequest) []SlackBlock {
+	blocks := []SlackBlock{
+		// Header
+		{
+			Type: "header",
+			Text: &SlackBlockText{
+				Type: "plain_text",
+				Text: fmt.Sprintf("%s %s", emoji, title),
+			},
+		},
+		// Context info
+		{
+			Type: "section",
+			Fields: []SlackBlockText{
+				{Type: "mrkdwn", Text: fmt.Sprintf("*Event Type:*\n%s/%s", event.Type, event.Reason)},
+				{Type: "mrkdwn", Text: fmt.Sprintf("*Resource:*\n%s/%s", event.InvolvedObject.Kind, event.InvolvedObject.Name)},
+				{Type: "mrkdwn", Text: fmt.Sprintf("*Namespace:*\n%s", event.InvolvedObject.Namespace)},
+				{Type: "mrkdwn", Text: fmt.Sprintf("*Mode:*\n%s", mcpRequest.Mode)},
+			},
+		},
+		// Issue description
+		{
+			Type: "section",
+			Text: &SlackBlockText{
+				Type: "mrkdwn",
+				Text: fmt.Sprintf("*Issue:*\n%s", mcpRequest.Issue),
+			},
+		},
+		// Divider
+		{
+			Type: "divider",
+		},
+		// Footer
+		{
+			Type: "context",
+			Elements: []SlackBlockElement{
+				{
+					Type: "mrkdwn",
+					Text: fmt.Sprintf("Policy: `%s` | dot-ai Kubernetes Event Controller", policy.Name),
+				},
+			},
+		},
+	}
+	return blocks
+}
+
+// createCompleteBlocks creates Block Kit blocks for completion notifications
+func (r *RemediationPolicyReconciler) createCompleteBlocks(emoji, title string, policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event, mcpRequest *dotaiv1alpha1.McpRequest, mcpResponse *McpResponse) []SlackBlock {
+	blocks := []SlackBlock{
+		// Header
+		{
+			Type: "header",
+			Text: &SlackBlockText{
+				Type: "plain_text",
+				Text: fmt.Sprintf("%s %s", emoji, title),
+			},
+		},
+	}
+
+	// Add result message
+	if mcpResponse != nil {
+		var resultText string
+		if mcpResponse.Success {
+			resultText = mcpResponse.GetResultMessage()
+		} else {
+			resultText = mcpResponse.GetErrorMessage()
+		}
+		blocks = append(blocks, SlackBlock{
+			Type: "section",
+			Text: &SlackBlockText{
+				Type: "mrkdwn",
+				Text: fmt.Sprintf("*Result:*\n%s", resultText),
+			},
+		})
+	}
+
+	// Context fields
+	fields := []SlackBlockText{
+		{Type: "mrkdwn", Text: fmt.Sprintf("*Event Type:*\n%s/%s", event.Type, event.Reason)},
+		{Type: "mrkdwn", Text: fmt.Sprintf("*Resource:*\n%s/%s", event.InvolvedObject.Kind, event.InvolvedObject.Name)},
+		{Type: "mrkdwn", Text: fmt.Sprintf("*Namespace:*\n%s", event.InvolvedObject.Namespace)},
+		{Type: "mrkdwn", Text: fmt.Sprintf("*Mode:*\n%s", mcpRequest.Mode)},
+	}
+	blocks = append(blocks, SlackBlock{
+		Type:   "section",
+		Fields: fields,
+	})
+
+	// Add MCP details if available
+	if mcpResponse != nil {
+		mcpBlocks := r.createMcpDetailBlocks(mcpResponse)
+		blocks = append(blocks, mcpBlocks...)
+	}
+
+	// Original issue
+	blocks = append(blocks, SlackBlock{
+		Type: "section",
+		Text: &SlackBlockText{
+			Type: "mrkdwn",
+			Text: fmt.Sprintf("*Original Issue:*\n%s", mcpRequest.Issue),
+		},
+	})
+
+	// Divider
+	blocks = append(blocks, SlackBlock{
+		Type: "divider",
+	})
+
+	// Footer
+	blocks = append(blocks, SlackBlock{
+		Type: "context",
+		Elements: []SlackBlockElement{
+			{
+				Type: "mrkdwn",
+				Text: fmt.Sprintf("Policy: `%s` | dot-ai Kubernetes Event Controller", policy.Name),
+			},
+		},
+	})
+
+	return blocks
+}
+
+// createMcpDetailBlocks extracts detailed information from MCP response and creates Block Kit blocks
+func (r *RemediationPolicyReconciler) createMcpDetailBlocks(mcpResponse *McpResponse) []SlackBlock {
+	blocks := []SlackBlock{}
+	executed := r.getMcpExecutedStatus(mcpResponse)
+
+	if mcpResponse.Data != nil && mcpResponse.Data.Result != nil {
+		result := mcpResponse.Data.Result
+
+		// Execution time and confidence as fields
+		var metaFields []SlackBlockText
+		if mcpResponse.Data.ExecutionTime > 0 {
+			executionTimeSeconds := mcpResponse.Data.ExecutionTime / 1000
+			metaFields = append(metaFields, SlackBlockText{
+				Type: "mrkdwn",
+				Text: fmt.Sprintf("*Execution Time:*\n%.2fs", executionTimeSeconds),
+			})
+		}
+
+		if confidence, ok := result["confidence"].(float64); ok {
+			metaFields = append(metaFields, SlackBlockText{
+				Type: "mrkdwn",
+				Text: fmt.Sprintf("*Confidence:*\n%.0f%%", confidence*100),
+			})
+		}
+
+		if len(metaFields) > 0 {
+			blocks = append(blocks, SlackBlock{
+				Type:   "section",
+				Fields: metaFields,
+			})
+		}
+
+		// Root cause analysis
+		if analysis, ok := result["analysis"].(map[string]interface{}); ok {
+			if rootCause, ok := analysis["rootCause"].(string); ok && rootCause != "" {
+				blocks = append(blocks, SlackBlock{
+					Type: "section",
+					Text: &SlackBlockText{
+						Type: "mrkdwn",
+						Text: fmt.Sprintf("*Root Cause:*\n%s", rootCause),
+					},
+				})
+			}
+			if confLevel, ok := analysis["confidence"].(float64); ok {
+				blocks = append(blocks, SlackBlock{
+					Type: "section",
+					Text: &SlackBlockText{
+						Type: "mrkdwn",
+						Text: fmt.Sprintf("*Analysis Confidence:* %.0f%%", confLevel*100),
+					},
+				})
+			}
+		}
+
+		// Remediation commands - NO TRUNCATION, use code blocks
+		if remediation, ok := result["remediation"].(map[string]interface{}); ok {
+			if actions, ok := remediation["actions"].([]interface{}); ok && len(actions) > 0 {
+				commandsTitle := "Commands Executed"
+				if !executed {
+					commandsTitle = "Recommended Commands"
+				}
+
+				blocks = append(blocks, SlackBlock{
+					Type: "section",
+					Text: &SlackBlockText{
+						Type: "mrkdwn",
+						Text: fmt.Sprintf("*%s:*", commandsTitle),
+					},
+				})
+
+				// Add each command in its own code block - NO TRUNCATION
+				for i, action := range actions {
+					// Slack recommends max 50 blocks per message - enforce 10 command limit
+					if i >= 10 {
+						blocks = append(blocks, SlackBlock{
+							Type: "section",
+							Text: &SlackBlockText{
+								Type: "mrkdwn",
+								Text: fmt.Sprintf("_... and %d more commands_", len(actions)-10),
+							},
+						})
+						break
+					}
+
+					if actionMap, ok := action.(map[string]interface{}); ok {
+						if cmd, ok := actionMap["command"].(string); ok && cmd != "" {
+							blocks = append(blocks, SlackBlock{
+								Type: "section",
+								Text: &SlackBlockText{
+									Type: "mrkdwn",
+									Text: fmt.Sprintf("```\n%s\n```", cmd), // Full command in code block
+								},
+							})
+						}
+					}
+				}
+			}
+		}
+
+		// Validation results
+		if validation, ok := result["validation"].(map[string]interface{}); ok {
+			if success, ok := validation["success"].(bool); ok {
+				status := "❌ Failed"
+				if success {
+					status = "✅ Passed"
+				}
+				blocks = append(blocks, SlackBlock{
+					Type: "section",
+					Text: &SlackBlockText{
+						Type: "mrkdwn",
+						Text: fmt.Sprintf("*Validation:* %s", status),
+					},
+				})
+			}
+		}
+
+		// Action count summary
+		if results, ok := result["results"].([]interface{}); ok && len(results) > 0 {
+			blocks = append(blocks, SlackBlock{
+				Type: "section",
+				Text: &SlackBlockText{
+					Type: "mrkdwn",
+					Text: fmt.Sprintf("*Actions Taken:* %d remediation actions", len(results)),
+				},
+			})
+		}
+	}
+
+	// Add error details for failed responses
+	if !mcpResponse.Success && mcpResponse.Error != nil {
+		errorText := ""
+		if mcpResponse.Error.Code != "" {
+			errorText += fmt.Sprintf("*Error Code:* `%s`\n", mcpResponse.Error.Code)
+		}
+		if mcpResponse.Error.Details != nil {
+			if reason, ok := mcpResponse.Error.Details["reason"].(string); ok && reason != "" {
+				errorText += fmt.Sprintf("*Error Details:* %s", reason)
+			}
+		}
+		if errorText != "" {
+			blocks = append(blocks, SlackBlock{
+				Type: "section",
+				Text: &SlackBlockText{
+					Type: "mrkdwn",
+					Text: errorText,
+				},
+			})
+		}
+	}
+
+	return blocks
+}
+
 // getMcpExecutedStatus checks if MCP actually executed commands or just provided recommendations
 func (r *RemediationPolicyReconciler) getMcpExecutedStatus(mcpResponse *McpResponse) bool {
 	if mcpResponse.Data != nil && mcpResponse.Data.Result != nil {
@@ -1119,139 +1391,6 @@ func (r *RemediationPolicyReconciler) getMcpExecutedStatus(mcpResponse *McpRespo
 		}
 	}
 	return false
-}
-
-// addMcpDetailFields extracts detailed information from MCP response and adds to Slack fields
-func (r *RemediationPolicyReconciler) addMcpDetailFields(fields *[]SlackField, mcpResponse *McpResponse) {
-	executed := r.getMcpExecutedStatus(mcpResponse)
-	if mcpResponse.Data != nil && mcpResponse.Data.Result != nil {
-		result := mcpResponse.Data.Result
-
-		// Add execution time if available
-		if mcpResponse.Data.ExecutionTime > 0 {
-			executionTimeSeconds := mcpResponse.Data.ExecutionTime / 1000
-			*fields = append(*fields, SlackField{
-				Title: "Execution Time",
-				Value: fmt.Sprintf("%.2fs", executionTimeSeconds),
-				Short: true,
-			})
-		}
-
-		// Extract confidence level if available
-		if confidence, ok := result["confidence"].(float64); ok {
-			*fields = append(*fields, SlackField{
-				Title: "Confidence",
-				Value: fmt.Sprintf("%.0f%%", confidence*100),
-				Short: true,
-			})
-		}
-
-		// Extract analysis information
-		if analysis, ok := result["analysis"].(map[string]interface{}); ok {
-			if rootCause, ok := analysis["rootCause"].(string); ok && rootCause != "" {
-				*fields = append(*fields, SlackField{
-					Title: "Root Cause",
-					Value: rootCause,
-					Short: false,
-				})
-			}
-			if confLevel, ok := analysis["confidence"].(float64); ok {
-				*fields = append(*fields, SlackField{
-					Title: "Analysis Confidence",
-					Value: fmt.Sprintf("%.0f%%", confLevel*100),
-					Short: true,
-				})
-			}
-		}
-
-		// Extract remediation actions/commands if available
-		if remediation, ok := result["remediation"].(map[string]interface{}); ok {
-			if actions, ok := remediation["actions"].([]interface{}); ok && len(actions) > 0 {
-				var commands []string
-				for _, action := range actions {
-					if actionMap, ok := action.(map[string]interface{}); ok {
-						if cmd, ok := actionMap["command"].(string); ok && cmd != "" {
-							// Truncate very long commands for Slack display
-							if len(cmd) > 200 {
-								cmd = cmd[:200] + "..."
-							}
-							commands = append(commands, fmt.Sprintf("• %s", cmd))
-						}
-					}
-				}
-				if len(commands) > 0 {
-					commandsTitle := "Commands Executed"
-					if !executed {
-						commandsTitle = "Recommended Commands"
-					}
-					*fields = append(*fields, SlackField{
-						Title: commandsTitle,
-						Value: strings.Join(commands, "\n"),
-						Short: false,
-					})
-				}
-			}
-		}
-
-		// Extract validation results if available
-		if validation, ok := result["validation"].(map[string]interface{}); ok {
-			if success, ok := validation["success"].(bool); ok {
-				status := "❌ Failed"
-				if success {
-					status = "✅ Passed"
-				}
-				*fields = append(*fields, SlackField{
-					Title: "Validation",
-					Value: status,
-					Short: true,
-				})
-			}
-		}
-
-		// Extract action count/results summary
-		if results, ok := result["results"].([]interface{}); ok && len(results) > 0 {
-			*fields = append(*fields, SlackField{
-				Title: "Actions Taken",
-				Value: fmt.Sprintf("%d remediation actions", len(results)),
-				Short: true,
-			})
-
-			// Extract first result's action and output for details
-			if firstResult, ok := results[0].(map[string]interface{}); ok {
-				if action, ok := firstResult["action"].(string); ok && action != "" {
-					// Truncate for Slack display
-					if len(action) > 300 {
-						action = action[:300] + "..."
-					}
-					*fields = append(*fields, SlackField{
-						Title: "Primary Action",
-						Value: action,
-						Short: false,
-					})
-				}
-			}
-		}
-	}
-
-	// Add error details for failed responses
-	if !mcpResponse.Success && mcpResponse.Error != nil {
-		if mcpResponse.Error.Code != "" {
-			*fields = append(*fields, SlackField{
-				Title: "Error Code",
-				Value: mcpResponse.Error.Code,
-				Short: true,
-			})
-		}
-		if mcpResponse.Error.Details != nil {
-			if reason, ok := mcpResponse.Error.Details["reason"].(string); ok && reason != "" {
-				*fields = append(*fields, SlackField{
-					Title: "Error Details",
-					Value: reason,
-					Short: false,
-				})
-			}
-		}
-	}
 }
 
 // sendSlackWebhook sends the actual HTTP request to Slack webhook
