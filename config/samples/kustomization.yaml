@@ -1,5 +1,14 @@
 ## Append samples of your project ##
+
+# Set default namespace for all resources
+namespace: dot-ai
+
 resources:
+# Create namespace first
+- namespace.yaml
+# RemediationPolicy samples
 - remediationpolicy_comprehensive.yaml
-- solution_simple.yaml
+# Solution samples (in subdirectory)
+- solution/solution_simple_resources.yaml
+- solution/solution_simple.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

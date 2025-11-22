@@ -24,20 +24,18 @@ When the DevOps AI Toolkit `recommend` tool deploys resources to a cluster, the 
 - **Thin Controller**: Controller coordinates operations, delegates intelligence to MCP
 - **AI-Focused**: Primary benefit is providing context for AI/MCP tools
 
-## Current Status (Milestone 1)
+## Current Status (Milestone 2)
 
 **✅ Implemented:**
 - Solution CRD with complete schema (spec + status)
-- Basic controller that watches Solution CRs
-- Status management (state, observedGeneration, conditions)
-- Resource count tracking
-- Integration tests
-
-**⏳ Coming in Milestone 2:**
-- Actual resource discovery and verification
-- ownerReferences management for garbage collection
-- Health checking of child resources
-- Ready/Failed resource counts
+- Controller that watches Solution CRs and child resources
+- Resource discovery from `spec.resources` list
+- Dynamic ownerReference management for garbage collection
+- Health checking of child resources (conditions, replica counts)
+- Status management with actual health tracking (ready/failed counts)
+- Status updates based on resource state (deployed/degraded/pending)
+- Wildcard RBAC for tracking any resource type
+- Integration tests (65 tests passing)
 
 **⏳ Coming in Milestone 3:**
 - Drift detection when resources are modified
@@ -125,36 +123,57 @@ make run
 
 Leave this running in one terminal. You'll see controller logs in real-time.
 
-### Step 2: Create a Test Solution
+### Step 2: Deploy Sample Resources and Solution
 
-In another terminal, create a simple Solution CR:
+In another terminal, deploy the Solution samples:
 
 ```bash
-kubectl apply -f config/samples/solution_simple.yaml
+# Deploy Solution samples (namespace + resources + Solution CR)
+kubectl apply -k config/samples/solution/
+
+# This creates:
+# - dot-ai namespace
+# - web-app Deployment + Service
+# - postgresql StatefulSet + Service + PVC
+# - sample-solution CR (tracks all the above resources)
 ```
+
+**Note**: Resources are created before the Solution, but order doesn't matter. The controller handles both cases gracefully.
 
 ### Step 3: Observe Controller Behavior
 
 Watch the controller logs from Step 1. You should see:
 
 ```
-INFO    Reconciling Solution    {"solution": "default/sample-solution", "intent": "Deploy a sample web application...", "resources": 5}
+INFO    Reconciling Solution    {"solution": "dot-ai/sample-solution", "intent": "Deploy a sample...", "resources": 5}
 INFO    Initializing status for new Solution
 INFO    ✅ Solution status initialized  {"state": "deployed", "totalResources": 5}
+INFO    Reconciling Solution    {"solution": "dot-ai/sample-solution", "resources": 5, "observedGeneration": 1}
+INFO    Ensuring resource ownership
+DEBUG   ✅ ownerReference ensured  {"kind": "Deployment", "name": "web-app"}
+DEBUG   ✅ ownerReference ensured  {"kind": "Service", "name": "web-app-service"}
+DEBUG   ✅ ownerReference ensured  {"kind": "StatefulSet", "name": "postgresql"}
+DEBUG   Resource is ready  {"kind": "Deployment", "name": "web-app", "reason": "Available"}
+DEBUG   Resource is ready  {"kind": "Service", "name": "web-app-service", "reason": "ResourceExists"}
 INFO    ✅ Solution reconciled successfully  {"state": "deployed", "totalResources": 5}
 ```
+
+**Key observations:**
+- ownerReferences are dynamically added to all child resources
+- Health checking reports ready/failed status
+- Status tracks actual resource health
 
 ### Step 4: Inspect Solution Status
 
 ```bash
-# List all Solutions
-kubectl get solutions
+# List all Solutions in dot-ai namespace
+kubectl get solutions -n dot-ai
 
 # Get detailed status
-kubectl describe solution sample-solution
+kubectl describe solution sample-solution -n dot-ai
 
 # Get full YAML with status
-kubectl get solution sample-solution -o yaml
+kubectl get solution sample-solution -n dot-ai -o yaml
 ```
 
 Expected output:
@@ -165,48 +184,106 @@ status:
   observedGeneration: 1
   resources:
     total: 5
-    ready: 0    # Will be populated in Milestone 2
-    failed: 0   # Will be populated in Milestone 2
+    ready: 5      # All resources are healthy (Milestone 2)
+    failed: 0
   conditions:
   - type: Ready
     status: "True"
-    reason: SolutionCreated
-    message: "Solution tracking 5 resources"
+    reason: AllResourcesReady
+    message: "All 5 resources are ready"
     lastTransitionTime: "2025-11-22T..."
 ```
 
-### Step 5: Test Status Updates
+### Step 5: Verify ownerReferences Were Added
 
-Update the Solution to trigger reconciliation:
+Check that ownerReferences were dynamically added to child resources:
 
 ```bash
-# Update intent field
-kubectl patch solution sample-solution --type merge -p '{"spec":{"intent":"Updated intent"}}'
+# Check web-app Deployment
+kubectl get deployment web-app -n dot-ai -o jsonpath='{.metadata.ownerReferences}' | jq
 
-# Watch observedGeneration increment
-kubectl get solution sample-solution -o jsonpath='{.status.observedGeneration}'
+# Expected: ownerReference pointing to sample-solution
+# with controller=true and blockOwnerDeletion=true
 ```
 
-The controller will reconcile and increment `observedGeneration` from 1 to 2.
+All child resources should now have ownerReferences pointing to the Solution CR.
 
-### Step 6: Cleanup
+### Step 6: Test Health Detection
+
+Break a Deployment to see the health status change:
 
 ```bash
-kubectl delete solution sample-solution
+# Use a non-existent image to make deployment unhealthy
+kubectl set image deployment/web-app -n dot-ai nginx=nginx:nonexistent
+```
+
+Wait ~1 minute for reconciliation. Check status:
+
+```bash
+kubectl get solution sample-solution -n dot-ai -o yaml
+```
+
+Expected status shows degraded state:
+
+```yaml
+status:
+  state: degraded
+  resources:
+    total: 5
+    ready: 4      # 4 resources still healthy
+    failed: 1     # web-app Deployment is not Available
+  conditions:
+  - type: Ready
+    status: "False"
+    reason: ResourcesNotReady
+    message: "Ready: 4/5, Failed: 1"
+```
+
+Fix it:
+
+```bash
+kubectl set image deployment/web-app -n dot-ai nginx=nginx:latest
+```
+
+Wait for pods to become ready. Status will return to `state: deployed` with `ready: 5`.
+
+### Step 7: Test Garbage Collection
+
+Delete the Solution and verify children are automatically deleted:
+
+```bash
+# Delete Solution
+kubectl delete solution sample-solution -n dot-ai
+
+# Verify child resources are garbage collected
+kubectl get deployment web-app -n dot-ai
+# Error from server (NotFound): deployments.apps "web-app" not found
+
+kubectl get service web-app-service -n dot-ai
+# Error from server (NotFound): services "web-app-service" not found
+```
+
+**Expected**: All child resources are automatically deleted by Kubernetes GC because ownerReferences were set with `blockOwnerDeletion: true`.
+
+### Step 8: Cleanup
+
+```bash
+# Delete remaining resources and namespace
+kubectl delete -k config/samples/solution/
 ```
 
 ## Example Solutions
 
 ### Simple Example
 
-The `config/samples/solution_simple.yaml` file contains a basic example:
+The `config/samples/solution/solution_simple.yaml` file contains a basic example:
 
 ```yaml
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: Solution
 metadata:
   name: sample-solution
-  namespace: default
+  namespace: dot-ai
 spec:
   intent: "Deploy a sample web application with database backend"
 
@@ -222,11 +299,9 @@ spec:
     - apiVersion: apps/v1
       kind: Deployment
       name: web-app
-      namespace: default
     - apiVersion: v1
       kind: Service
       name: web-app-service
-      namespace: default
 ```
 
 ### Custom Example
@@ -239,7 +314,7 @@ apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: Solution
 metadata:
   name: my-solution
-  namespace: default
+  namespace: dot-ai
 spec:
   intent: "Your deployment intent here"
 
@@ -251,64 +326,60 @@ spec:
     - apiVersion: v1
       kind: ConfigMap
       name: my-config
-      namespace: default
     - apiVersion: v1
       kind: Secret
       name: my-secret
-      namespace: default
 EOF
 ```
 
-## Current Limitations (Milestone 1)
+## Current Limitations (Milestone 2)
 
-### No Resource Validation
+### Single Namespace Only
 
-The controller **does not verify** that resources listed in `spec.resources` actually exist in the cluster. It simply:
-- Counts resources from the list
-- Sets `status.resources.total`
-- Sets `status.state = "deployed"`
+Solutions can only track resources in the same namespace as the Solution CR itself. Multi-namespace solutions are not supported in v1alpha1.
 
-**Example:** You can create a Solution referencing non-existent resources, and the controller will accept it:
-
+**Example - NOT supported:**
 ```yaml
+metadata:
+  name: my-solution
+  namespace: dot-ai
 spec:
   resources:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: does-not-exist  # This resource doesn't exist!
-      namespace: default
+    - kind: Service
+      name: database
+      namespace: production  # ❌ Different namespace not supported
 ```
 
-The controller will still show `state: deployed` and `total: 1`.
+**Workaround**: Create separate Solutions in each namespace.
 
-**This is intentional for Milestone 1** - resource discovery and validation will be added in Milestone 2.
+### No Drift Reconciliation
 
-### No ownerReferences Management
+The controller detects when resources become unhealthy and updates status accordingly, but it does not automatically fix drift or recreate missing resources.
 
-The controller does not yet add `ownerReferences` to child resources. This means:
-- Deleting a Solution CR **will not** delete its child resources
-- No Kubernetes garbage collection integration
-- Child resources must be deleted manually
+**Example**: If you manually delete a child Deployment, the Solution status will show `failed: 1`, but the controller won't recreate it.
 
-**Coming in Milestone 2**: The controller will dynamically add ownerReferences to enable automatic cleanup.
+**Coming in Milestone 3**: Enhanced drift detection and reporting.
 
-### No Health Checking
+### No MCP Integration
 
-The `status.resources.ready` and `status.resources.failed` fields are always `0`. The controller doesn't check if resources are actually healthy or even exist.
+The controller doesn't yet call MCP tools for solution-level operations.
 
-**Coming in Milestone 2**: The controller will verify resource health and update these counts.
+**Coming in Milestone 4**: MCP integration for intelligent solution operations.
 
 ## What Works Now
 
-Despite the limitations, the current implementation provides:
+The current Milestone 2 implementation provides:
 
 ✅ **Solution Tracking**: Create and manage Solution CRs
-✅ **Status Management**: Automatic status initialization and updates
+✅ **Resource Discovery**: Automatically discovers resources from `spec.resources`
+✅ **ownerReference Management**: Dynamically adds ownerReferences to child resources
+✅ **Garbage Collection**: Kubernetes automatically deletes children when Solution is deleted
+✅ **Health Checking**: Monitors resource health using conditions and replica counts
+✅ **Status Management**: Real-time status updates with ready/failed counts
+✅ **State Tracking**: Solution state reflects actual health (deployed/degraded/pending)
 ✅ **Generation Tracking**: `observedGeneration` tracks spec changes
-✅ **Ready Conditions**: Standard Kubernetes condition reporting
-✅ **Resource Counting**: Tracks total resource count from spec
 ✅ **Event Recording**: Kubernetes events for observability
-✅ **Graceful Deletion**: Handles Solution CR deletion properly
+✅ **Wildcard RBAC**: Works with any resource type (built-in and custom CRDs)
 
 ## kubectl Shortcuts
 
@@ -316,39 +387,50 @@ The Solution CRD includes the shortname `sol` for convenience:
 
 ```bash
 # Instead of
-kubectl get solutions
+kubectl get solutions -n dot-ai
 
 # You can use
-kubectl get sol
+kubectl get sol -n dot-ai
 ```
 
 ## Next Steps
 
 ### For Users
 
-Wait for **Milestone 2** before using Solution CRDs in production. The current implementation is suitable for:
-- Testing the controller
-- Understanding the API schema
-- Preparing for future integration with dot-ai recommend tool
+**Milestone 2 is complete!** The Solution controller is now ready for testing and early adoption. Current capabilities:
+
+- Full resource tracking and health monitoring
+- Automatic garbage collection
+- Works with any Kubernetes resource type
+- Production-ready status management
+
+**Not yet ready for**: Production use. Wait for Milestone 6 (Documentation & Production Readiness) for:
+- Complete user documentation
+- Helm chart integration
+- Performance benchmarks
+- Troubleshooting guides
 
 ### For Developers
 
 To contribute to Solution controller development:
 
 1. **Read the PRD**: See `prds/4-solution-crd-tracking.md` for full requirements
-2. **Check Milestones**: Understand what's planned for future releases
-3. **Run Tests**: `make test` to verify controller behavior
-4. **Review Code**: Controller logic in `internal/controller/solution_controller.go`
+2. **Test Milestone 2**: Follow this guide to verify functionality
+3. **Check Next Milestones**: Milestone 3 (Drift Detection) is next
+4. **Run Tests**: `make test` - all 65 tests should pass
+5. **Review Code**: Controller logic in `internal/controller/solution_controller.go`
 
 ## Roadmap
 
-### Milestone 2: Resource Tracking & ownerReferences
+### ✅ Milestone 2: Resource Tracking & ownerReferences (COMPLETE)
 
-- Discover child resources from `spec.resources`
-- Add ownerReferences to child resources
-- Health check child resources
-- Update `ready` and `failed` counts
-- Enable Kubernetes garbage collection
+- ✅ Discover child resources from `spec.resources`
+- ✅ Add ownerReferences to child resources dynamically
+- ✅ Health check child resources (conditions + replica counts)
+- ✅ Update `ready` and `failed` counts based on actual health
+- ✅ Enable Kubernetes garbage collection
+- ✅ Wildcard RBAC for any resource type
+- ✅ 65 integration tests passing
 
 ### Milestone 3: Drift Detection & Status Management
 
@@ -394,7 +476,7 @@ kubectl get crds solutions.dot-ai.devopstoolkit.live
 
 ```bash
 # Show the resources list
-kubectl get solution <name> -o jsonpath='{.spec.resources}' | jq .
+kubectl get solution <name> -n dot-ai -o jsonpath='{.spec.resources}' | jq .
 ```
 
 ### Controller Logs Show Conflicts
