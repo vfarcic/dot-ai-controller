@@ -1,0 +1,15 @@
+# Kustomization for Solution samples only
+# Deploy with: kubectl apply -k config/samples/solution/
+
+apiVersion: kustomize.config.k8s.io/v1
+kind: Kustomization
+
+namespace: dot-ai
+
+resources:
+  # Create namespace
+  - namespace.yaml
+  # Create resources that Solution will track
+  - solution_simple_resources.yaml
+  # Create Solution CR
+  - solution_simple.yaml

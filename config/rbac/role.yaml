@@ -14,6 +14,16 @@ rules:
   - list
   - watch
 - apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - coordination.k8s.io
   resources:
   - leases
@@ -34,7 +44,26 @@ rules:
   - dot-ai.devopstoolkit.live
   resources:
   - remediationpolicies/status
+  - solutions/status
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - dot-ai.devopstoolkit.live
+  resources:
+  - solutions
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - dot-ai.devopstoolkit.live
+  resources:
+  - solutions/finalizers
+  verbs:
   - update

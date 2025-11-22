@@ -1,0 +1,44 @@
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: Solution
+metadata:
+  name: sample-solution
+  namespace: dot-ai
+spec:
+  # Original user intent that led to this deployment
+  intent: "Deploy a sample web application with database backend"
+
+  # Solution metadata (information not in individual resources)
+  context:
+    createdBy: "dot-ai-recommend-tool"
+    rationale: "User requested a scalable web application with PostgreSQL persistence"
+    patterns:
+      - "Microservices Pattern"
+      - "Database Per Service Pattern"
+    policies:
+      - "production-security-policy"
+
+  # List of Kubernetes resources that compose this solution
+  # Note: namespace is omitted - defaults to Solution's namespace (dot-ai)
+  resources:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: web-app
+
+    - apiVersion: v1
+      kind: Service
+      name: web-app-service
+
+    - apiVersion: apps/v1
+      kind: StatefulSet
+      name: postgresql
+
+    - apiVersion: v1
+      kind: Service
+      name: postgresql-service
+
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: postgresql-data
+
+  # Documentation URL (will be populated by dot-ai PRD #228 in the future)
+  documentationURL: "https://github.com/myorg/deployments/blob/main/docs/sample-solution.md"
