@@ -144,7 +144,7 @@ kubectl apply -k config/samples/solution/
 
 Watch the controller logs from Step 1. You should see:
 
-```
+```log
 INFO    Reconciling Solution    {"solution": "dot-ai/sample-solution", "intent": "Deploy a sample...", "resources": 5}
 INFO    Initializing status for new Solution
 INFO    ✅ Solution status initialized  {"state": "deployed", "totalResources": 5}
