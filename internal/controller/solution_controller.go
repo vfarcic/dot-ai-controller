@@ -112,8 +112,8 @@ func (r *SolutionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		"totalResources", solution.Status.Resources.Total,
 	)
 
-	// Requeue periodically for status updates
-	return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+	// Requeue periodically for status updates (every 30 seconds)
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 // initializeSolutionStatus initializes the status for a new Solution
