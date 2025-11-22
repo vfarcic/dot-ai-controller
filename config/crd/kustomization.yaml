@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/dot-ai.devopstoolkit.live_remediationpolicies.yaml
+- bases/dot-ai.devopstoolkit.live_solutions.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

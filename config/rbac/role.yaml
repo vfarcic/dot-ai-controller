@@ -34,7 +34,26 @@ rules:
   - dot-ai.devopstoolkit.live
   resources:
   - remediationpolicies/status
+  - solutions/status
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - dot-ai.devopstoolkit.live
+  resources:
+  - solutions
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - dot-ai.devopstoolkit.live
+  resources:
+  - solutions/finalizers
+  verbs:
   - update

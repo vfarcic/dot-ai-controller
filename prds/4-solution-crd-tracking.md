@@ -3,7 +3,7 @@
 **Created**: 2025-11-21
 **Status**: Draft
 **Owner**: TBD
-**Last Updated**: 2025-11-21
+**Last Updated**: 2025-11-22
 **Issue**: [#4](https://github.com/vfarcic/dot-ai-controller/issues/4)
 **Priority**: High
 
@@ -192,10 +192,11 @@ status:
 The Solution Controller is a **thin coordinator** that:
 
 1. **Watches Solution CRs**: Detects create/update/delete events
-2. **Reconciles State**: Updates `status` based on child resource health
-3. **Detects Drift**: Identifies when child resources are manually modified
-4. **Calls MCP**: Delegates intelligence to MCP tools (future enhancement)
-5. **Updates Status**: Keeps status.conditions and status.resources current
+2. **Manages ownerReferences**: Dynamically adds ownerReferences to resources listed in `spec.resources`
+3. **Reconciles State**: Updates `status` based on child resource health
+4. **Detects Drift**: Identifies when child resources are manually modified
+5. **Calls MCP**: Delegates intelligence to MCP tools (future enhancement)
+6. **Updates Status**: Keeps status.conditions and status.resources current
 
 **NOT Responsible For:**
 - Complex business logic (that's in MCP)
@@ -207,11 +208,12 @@ The Solution Controller is a **thin coordinator** that:
 **When recommend tool deploys a solution:**
 
 1. **Generate manifests** (existing functionality)
-2. **Create Solution CR** with metadata and resource references
-3. **Add ownerReferences** to all generated manifests
-4. **Apply Solution CR** first (parent must exist for ownerReferences)
-5. **Apply child resources** with ownerReferences pointing to Solution CR
-6. **Controller reconciles** and updates Solution status
+2. **Create Solution CR** with metadata and resource references in `spec.resources`
+3. **Apply Solution CR** first (parent must exist)
+4. **Apply child resources** (without ownerReferences initially)
+5. **Controller reconciles**:
+   - Dynamically adds ownerReferences to child resources
+   - Updates Solution status based on resource health
 
 ### Open Questions & Design Notes
 
@@ -277,21 +279,21 @@ Future consideration: Allow retrofitting existing apps by creating Solution CRs 
 
 ## Milestones
 
-### Milestone 1: CRD Definition & Basic Controller ⬜
+### Milestone 1: CRD Definition & Basic Controller ✅
 **Goal**: Solution CRD exists, basic controller reconciles state
 
 **Success Criteria:**
 - [x] Solution CRD defined with complete schema (spec + status)
-- [ ] Controller scaffold created using Kubebuilder
-- [ ] Controller watches Solution CRs and logs events
-- [ ] Basic reconciliation updates status.state
-- [ ] Integration test: Create Solution CR, controller updates status
+- [x] Controller scaffold created using Kubebuilder
+- [x] Controller watches Solution CRs and logs events
+- [x] Basic reconciliation updates status.state
+- [x] Integration test: Create Solution CR, controller updates status
 
 **Deliverables:**
 - [x] `api/v1alpha1/solution_types.go`
-- [ ] `internal/controller/solution_controller.go`
+- [x] `internal/controller/solution_controller.go`
 - [x] Unit tests for CRD validation
-- [ ] Integration test for basic reconciliation
+- [x] Integration test for basic reconciliation
 
 **Estimated Duration**: 1-2 weeks
 
@@ -299,13 +301,15 @@ Future consideration: Allow retrofitting existing apps by creating Solution CRs 
 **Goal**: Controller tracks child resources and maintains status
 
 **Success Criteria:**
-- Controller discovers child resources via ownerReferences
+- Controller discovers child resources from `spec.resources` list
+- Controller dynamically adds ownerReferences to discovered resources
 - Status.resources reflects actual resource count and health
 - Status.conditions shows Ready when all resources exist
 - Garbage collection works (deleting Solution CR deletes children)
-- Integration test: Deploy solution with children, verify tracking
+- Integration test: Deploy solution with children, verify tracking and ownerReferences
 
 **Deliverables:**
+- ownerReference management logic in controller
 - Resource discovery logic in controller
 - Status update logic for resource health
 - Health check aggregation across children
@@ -351,17 +355,17 @@ Future consideration: Allow retrofitting existing apps by creating Solution CRs 
 **Goal**: dot-ai recommend tool creates Solution CRs when deploying
 
 **Success Criteria:**
-- recommend tool generates Solution CR manifests
-- ownerReferences added to all generated child resources
-- Solution CR applied before children
-- Complete workflow test: recommend → deploy → Solution CR created
+- recommend tool generates Solution CR manifests with `spec.resources` list populated
+- recommend tool does NOT inject ownerReferences (controller handles this)
+- Solution CR applied by recommend tool
+- Child resources applied without ownerReferences
+- Complete workflow test: recommend → deploy → controller adds ownerReferences
 - Documentation updated in dot-ai repo
 
 **Deliverables:**
 - Changes to dot-ai recommend tool
-- Solution CR generation logic
-- ownerReference injection
-- E2E test in dot-ai repo
+- Solution CR generation logic with `spec.resources` population
+- E2E test in dot-ai repo validating full workflow
 
 **Estimated Duration**: 1-2 weeks
 
@@ -411,7 +415,7 @@ Future consideration: Allow retrofitting existing apps by creating Solution CRs 
 ## Success Criteria
 
 - [x] **CRD Exists**: Solution CRD deployed and functional in cluster
-- [ ] **Controller Works**: Controller reconciles Solution CRs and updates status
+- [x] **Controller Works**: Controller reconciles Solution CRs and updates status
 - [ ] **Resource Tracking**: Child resources correctly linked via ownerReferences
 - [ ] **Garbage Collection**: Deleting Solution CR deletes all child resources
 - [ ] **Drift Detection**: Controller detects manual resource modifications
@@ -526,3 +530,93 @@ Future consideration: Allow retrofitting existing apps by creating Solution CRs 
 - Create Solution controller using Kubebuilder
 - Implement basic reconciliation logic
 - Add integration tests for controller behavior
+
+### 2025-11-22: ownerReference Management Design Decision
+**Duration**: ~30 minutes
+**Status**: Resolved
+
+**Design Question**:
+Who should set ownerReferences on child resources - the recommend tool during deployment or the controller during reconciliation?
+
+**Decision**:
+Controller dynamically manages ownerReferences during reconciliation.
+
+**Rationale**:
+- **Simpler recommend tool implementation**: No need to handle Solution UID injection or timing complexity
+- **Standard Kubernetes pattern**: Controllers typically manage ownerReferences for resources they watch (e.g., ReplicaSet adding ownerRefs to Pods)
+- **Future flexibility**: Enables manual Solution CR creation for existing resources (future enhancement)
+- **Self-healing capability**: Controller re-adds ownerReferences if manually removed
+- **Avoids race conditions**: No chicken-and-egg problem of needing Solution UID before applying children
+- **Status independence**: Resource health tracking works regardless of ownerReference state
+
+**Alternatives Considered**:
+1. **recommend tool static injection**: Would require two-phase deployment (create Solution, get UID, inject UID, apply children). Complex timing and error handling.
+2. **No ownerReferences**: Would lose Kubernetes garbage collection benefits and bidirectional navigation.
+
+**Impact on Implementation**:
+- **Controller (Milestone 2)**: Add ownerReference management logic in reconciliation loop
+- **recommend tool (Milestone 5)**: Simplified scope - only populate `spec.resources`, no ownerReference injection
+- **Reconciliation flow**: Two-phase approach (ensure ownership, then check health)
+- **Status updates**: Health tracking independent of ownerReference state
+
+**Code Changes Required**:
+- ✅ Updated Controller Responsibilities section (line 195): Added ownerReference management
+- ✅ Updated Workflow Integration section (lines 210-216): Removed recommend tool ownerReference injection
+- ✅ Updated Milestone 2 success criteria and deliverables (lines 304-316): Added ownerReference management
+- ✅ Updated Milestone 5 scope (lines 358-368): Removed ownerReference injection from recommend tool
+
+**Next Steps**:
+- Implement controller scaffold (Milestone 1)
+- Add ownerReference management in Milestone 2
+- Update recommend tool in Milestone 5 with simplified approach
+
+### 2025-11-22: Milestone 1 Complete - Solution Controller Implementation
+**Duration**: ~3 hours
+**Status**: ✅ Milestone 1 Complete
+
+**Completed Work**:
+- Created Solution controller (`internal/controller/solution_controller.go`, 232 lines)
+  - SolutionReconciler with basic reconciliation logic
+  - Status initialization for new Solutions
+  - Status updates with exponential backoff retry logic
+  - Event recording for observability
+  - Periodic reconciliation (1 minute requeue)
+- Registered controller in `cmd/main.go` alongside RemediationPolicy controller
+- Created comprehensive integration tests (`internal/controller/solution_controller_test.go`, 318 lines)
+  - 5 test scenarios covering initialization, updates, deletion, resource counting
+  - Uses envtest framework for real API server testing
+  - All tests passing with 81.6% controller package coverage
+- Generated RBAC manifests with full CRUD permissions for Solutions
+- Updated kustomization config to include Solution CRD in `make install`
+- Created user documentation (`docs/solution-guide.md`, 379 lines)
+  - Complete testing guide for Milestone 1 functionality
+  - Clear documentation of current limitations
+  - Roadmap for future milestones
+- Renamed sample files for consistency:
+  - `comprehensive_example.yaml` → `remediationpolicy_comprehensive.yaml`
+  - Created `solution_simple.yaml` example
+
+**Build & Test Results**:
+- ✅ `make build` - successful
+- ✅ `make test` - all tests passing
+- ✅ `make manifests generate` - CRD and RBAC generated correctly
+- ✅ Coverage: 81.6% for controller package
+
+**Key Implementation Details**:
+- Controller uses same patterns as RemediationPolicyReconciler (retry logic, event recording)
+- Status updates handle resource conflicts with exponential backoff
+- ObservedGeneration tracking for spec change detection
+- Ready condition management following Kubernetes conventions
+- Current limitation: No resource validation (spec.resources not checked for existence)
+
+**PRD Updates**:
+- Marked all Milestone 1 success criteria complete (5/5 items)
+- Marked all Milestone 1 deliverables complete (4/4 items)
+- Updated milestone status indicator from ⬜ to ✅
+- Marked "CRD Exists" and "Controller Works" complete in overall success criteria
+
+**Next Steps**:
+- Begin Milestone 2: Resource Tracking & ownerReferences
+- Implement resource discovery from `spec.resources`
+- Add ownerReference management logic
+- Implement health checking for child resources
