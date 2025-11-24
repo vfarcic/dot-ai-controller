@@ -95,10 +95,10 @@ jobs:
     - name: Generate Manifests and Sync with Helm Chart
       run: |
         make generate manifests
-        
-        # Copy CRD to Helm chart
-        cp config/crd/bases/dot-ai.devopstoolkit.live_remediationpolicies.yaml charts/dot-ai-controller/templates/crd.yaml
-        
+
+        # Copy all CRDs to Helm chart
+        cp config/crd/bases/*.yaml charts/dot-ai-controller/templates/
+
         # Copy and template RBAC ClusterRole to Helm chart
         sed 's/name: manager-role/name: {{ include "dot-ai-controller.clusterRoleName" . }}/' config/rbac/role.yaml > /tmp/manager-role.yaml
         sed '/metadata:/a\  labels:\n    {{- include "dot-ai-controller.labels" . | nindent 4 }}' /tmp/manager-role.yaml > charts/dot-ai-controller/templates/manager-role.yaml
