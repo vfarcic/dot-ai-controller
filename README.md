@@ -37,6 +37,8 @@ Monitor Kubernetes events and automatically remediate issues using the [DevOps A
 
 ## Quick Start
 
+> **Note**: If you're using [DevOps AI Toolkit (dot-ai)](https://github.com/vfarcic/dot-ai), the controller is automatically installed into your cluster. Skip to step 2.
+
 ### 1. Install Controller
 
 ```bash

@@ -2,6 +2,8 @@
 
 This guide covers installation and initial setup of the DevOps AI Toolkit Controller.
 
+> **Note**: If you're using [DevOps AI Toolkit (dot-ai)](https://github.com/vfarcic/dot-ai), the controller is automatically installed into your cluster. You can skip the installation section and proceed directly to [What's Next](#whats-next).
+
 ## Prerequisites
 
 - **kubectl** v1.11.3+
