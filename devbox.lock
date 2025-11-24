@@ -352,54 +352,6 @@
           "store_path": "/nix/store/pikr2lds8w3shnsq0l1f7aamlmvsi0i3-nushell-0.106.1"
         }
       }
-    },
-    "teller@2.0.7": {
-      "last_modified": "2025-07-28T17:09:23Z",
-      "resolved": "github:NixOS/nixpkgs/648f70160c03151bc2121d179291337ad6bc564b#teller",
-      "source": "devbox-search",
-      "version": "2.0.7",
-      "systems": {
-        "aarch64-darwin": {
-          "outputs": [
-            {
-              "name": "out",
-              "path": "/nix/store/01swcg5h5ip20mk4s21pm8w61742hk5k-teller-2.0.7",
-              "default": true
-            }
-          ],
-          "store_path": "/nix/store/01swcg5h5ip20mk4s21pm8w61742hk5k-teller-2.0.7"
-        },
-        "aarch64-linux": {
-          "outputs": [
-            {
-              "name": "out",
-              "path": "/nix/store/45n1jjwzxxk8cas26bfvncx1rd3wcx1j-teller-2.0.7",
-              "default": true
-            }
-          ],
-          "store_path": "/nix/store/45n1jjwzxxk8cas26bfvncx1rd3wcx1j-teller-2.0.7"
-        },
-        "x86_64-darwin": {
-          "outputs": [
-            {
-              "name": "out",
-              "path": "/nix/store/b70bwm6ydxnagr1g7ahklx84hr5myj3s-teller-2.0.7",
-              "default": true
-            }
-          ],
-          "store_path": "/nix/store/b70bwm6ydxnagr1g7ahklx84hr5myj3s-teller-2.0.7"
-        },
-        "x86_64-linux": {
-          "outputs": [
-            {
-              "name": "out",
-              "path": "/nix/store/s79rmzwqr74vd34mky9x75nmlr21qbgb-teller-2.0.7",
-              "default": true
-            }
-          ],
-          "store_path": "/nix/store/s79rmzwqr74vd34mky9x75nmlr21qbgb-teller-2.0.7"
-        }
-      }
     }
   }
 }
