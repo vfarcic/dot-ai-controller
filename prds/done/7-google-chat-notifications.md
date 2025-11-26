@@ -1,7 +1,7 @@
 # PRD: Google Chat Webhook Notifications
 
 **Issue**: [#7](https://github.com/vfarcic/dot-ai-controller/issues/7)
-**Status**: Draft
+**Status**: Complete
 **Priority**: Medium
 **Created**: 2025-11-26
 **Requested By**: @giz33 ([#6](https://github.com/vfarcic/dot-ai-controller/issues/6))
@@ -125,11 +125,11 @@ Google Chat uses a card-based message format. The implementation will use Google
 
 ## Milestones
 
-- [ ] **M1: CRD and API Updates** - Add GoogleChatConfig to types, generate manifests, update Helm chart CRDs
-- [ ] **M2: Core Implementation** - Implement validation, message formatting, and webhook sending for Google Chat
-- [ ] **M3: Integration and Testing** - Add unit tests, integration tests, and verify end-to-end functionality
-- [ ] **M4: Documentation** - Update remediation guide, add sample configurations, update README if needed
-- [ ] **M5: Release Ready** - All tests passing, code reviewed, ready for merge
+- [x] **M1: CRD and API Updates** - Add GoogleChatConfig to types, generate manifests, update Helm chart CRDs
+- [x] **M2: Core Implementation** - Implement validation, message formatting, and webhook sending for Google Chat
+- [x] **M3: Integration and Testing** - Add unit tests, integration tests, and verify end-to-end functionality
+- [x] **M4: Documentation** - Update remediation guide, add sample configurations, update README if needed
+- [x] **M5: Release Ready** - All tests passing, code reviewed, ready for merge
 
 ## Out of Scope
 
@@ -156,6 +156,8 @@ Google Chat uses a card-based message format. The implementation will use Google
 | Date | Update |
 |------|--------|
 | 2025-11-26 | PRD created based on issue #6 request |
+| 2025-11-26 | M1-M4 completed: API types, controller implementation, tests, documentation |
+| 2025-11-26 | M5 completed: Release ready, PR created for merge |
 
 ---
 

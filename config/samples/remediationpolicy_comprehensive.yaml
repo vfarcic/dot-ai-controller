@@ -48,11 +48,19 @@ spec:
     eventsPerMinute: 5                # Lower rate for production safety
     cooldownMinutes: 15               # Longer cooldown to prevent spam
   
-  # Slack notifications configuration (DISABLED by default for safety)
+  # Notifications configuration (DISABLED by default for safety)
+  # You can enable Slack, Google Chat, or both simultaneously
   notifications:
+    # Slack notification configuration
     slack:
       enabled: false                  # Enable Slack notifications (default: false)
       webhookUrl: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"  # Replace with your actual webhook URL
       channel: "#k8s-alerts"          # Channel where notifications will be sent
+      notifyOnStart: false            # Notify when remediation starts (default: false)
+      notifyOnComplete: true          # Notify when remediation completes (default: true)
+    # Google Chat notification configuration
+    googleChat:
+      enabled: false                  # Enable Google Chat notifications (default: false)
+      webhookUrl: "https://chat.googleapis.com/v1/spaces/YOUR/SPACE/messages?key=YOUR_KEY&token=YOUR_TOKEN"
       notifyOnStart: false            # Notify when remediation starts (default: false)
       notifyOnComplete: true          # Notify when remediation completes (default: true)

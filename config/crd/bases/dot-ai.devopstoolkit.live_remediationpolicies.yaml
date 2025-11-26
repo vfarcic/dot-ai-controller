@@ -143,6 +143,28 @@ spec:
               notifications:
                 description: Notification configuration
                 properties:
+                  googleChat:
+                    description: Google Chat notification configuration
+                    properties:
+                      enabled:
+                        default: false
+                        description: Enable Google Chat notifications
+                        type: boolean
+                      notifyOnComplete:
+                        default: true
+                        description: Notify when remediation completes (default true)
+                        type: boolean
+                      notifyOnStart:
+                        default: false
+                        description: Notify when remediation starts (optional, default
+                          false)
+                        type: boolean
+                      webhookUrl:
+                        description: |-
+                          Google Chat webhook URL (required when enabled)
+                          Must start with https://chat.googleapis.com/
+                        type: string
+                    type: object
                   slack:
                     description: Slack notification configuration
                     properties:

@@ -6,7 +6,8 @@ This guide covers the RemediationPolicy CRD for event-driven remediation using t
 
 - Controller installed (see [Setup Guide](setup-guide.md))
 - **DevOps AI Toolkit MCP installed** - See [DevOps AI Toolkit documentation](https://github.com/vfarcic/dot-ai)
-- Slack webhook URL (optional, for notifications)
+- Slack webhook URL (optional, for Slack notifications)
+- Google Chat webhook URL (optional, for Google Chat notifications - requires Google Workspace paid account)
 
 ## Overview
 
@@ -362,14 +363,23 @@ rateLimiting:
   cooldownMinutes: 5                 # Wait time after processing an event
 ```
 
-### Slack Notifications
+### Notifications
+
+You can configure Slack, Google Chat, or both simultaneously:
 
 ```yaml
 notifications:
+  # Slack notifications
   slack:
     enabled: true
     webhookUrl: "https://hooks.slack.com/services/..."
     channel: "#alerts"
+    notifyOnStart: true              # Notify when remediation starts
+    notifyOnComplete: true           # Notify when remediation completes
+  # Google Chat notifications (requires Google Workspace paid account)
+  googleChat:
+    enabled: true
+    webhookUrl: "https://chat.googleapis.com/v1/spaces/..."
     notifyOnStart: true              # Notify when remediation starts
     notifyOnComplete: true           # Notify when remediation completes
 ```

@@ -100,11 +100,38 @@ type SlackConfig struct {
 	NotifyOnComplete bool `json:"notifyOnComplete,omitempty"`
 }
 
+// GoogleChatConfig defines Google Chat notification configuration
+type GoogleChatConfig struct {
+	// Enable Google Chat notifications
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Google Chat webhook URL (required when enabled)
+	// Must start with https://chat.googleapis.com/
+	// +optional
+	WebhookUrl string `json:"webhookUrl,omitempty"`
+
+	// Notify when remediation starts (optional, default false)
+	// +kubebuilder:default=false
+	// +optional
+	NotifyOnStart bool `json:"notifyOnStart,omitempty"`
+
+	// Notify when remediation completes (default true)
+	// +kubebuilder:default=true
+	// +optional
+	NotifyOnComplete bool `json:"notifyOnComplete,omitempty"`
+}
+
 // NotificationConfig defines notification settings
 type NotificationConfig struct {
 	// Slack notification configuration
 	// +optional
 	Slack SlackConfig `json:"slack,omitempty"`
+
+	// Google Chat notification configuration
+	// +optional
+	GoogleChat GoogleChatConfig `json:"googleChat,omitempty"`
 }
 
 // RemediationPolicySpec defines the desired state of RemediationPolicy
