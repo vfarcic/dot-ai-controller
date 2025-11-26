@@ -1563,8 +1563,7 @@ func (r *RemediationPolicyReconciler) sendGoogleChatNotification(ctx context.Con
 	// Send the message
 	if err := r.sendGoogleChatWebhook(ctx, policy.Spec.Notifications.GoogleChat.WebhookUrl, message); err != nil {
 		logger.Error(err, "failed to send Google Chat notification",
-			"notificationType", notificationType,
-			"webhookUrl", policy.Spec.Notifications.GoogleChat.WebhookUrl)
+			"notificationType", notificationType)
 		return err
 	}
 
