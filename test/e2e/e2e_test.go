@@ -601,7 +601,7 @@ spec:
 					"-n", testNamespace, "-o", "jsonpath={.metadata.ownerReferences[0].controller}")
 				output, err = utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("true"))
+				g.Expect(output).To(Equal("false"))
 			}).Should(Succeed())
 
 			By("verifying ownerReference was added to Service")
