@@ -9,6 +9,7 @@ tmp/
 bin/
 /manager
 *.coverprofile
+cover.out
 
 # Kubernetes test environment
 testbin/
