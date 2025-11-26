@@ -359,7 +359,7 @@ func (r *SolutionReconciler) ensureOwnerReference(ctx context.Context, solution 
 		Kind:               "Solution",
 		Name:               solution.Name,
 		UID:                solution.UID,
-		Controller:         ptr.To(true),
+		Controller:         ptr.To(false),
 		BlockOwnerDeletion: ptr.To(true),
 	}
 

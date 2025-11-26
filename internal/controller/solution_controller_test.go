@@ -714,7 +714,7 @@ var _ = Describe("Solution Controller", func() {
 					if owner.Kind == "Solution" &&
 						owner.Name == solution.Name &&
 						*owner.BlockOwnerDeletion &&
-						*owner.Controller {
+						!*owner.Controller {
 						return true
 					}
 				}
@@ -733,16 +733,16 @@ var _ = Describe("Solution Controller", func() {
 					if owner.Kind == "Solution" &&
 						owner.Name == solution.Name &&
 						*owner.BlockOwnerDeletion &&
-						*owner.Controller {
+						!*owner.Controller {
 						return true
 					}
 				}
 				return false
 			}, 10*time.Second, 500*time.Millisecond).Should(BeTrue())
 
-			// Note: Actual garbage collection (deletion of children when Solution is deleted)
-			// is handled by Kubernetes GC controller, which doesn't run in envtest.
-			// In a real cluster, deleting the Solution will automatically delete these resources.
+			// Note: Actual garbage collection behavior cannot be tested in envtest as the
+			// Kubernetes GC controller doesn't run here. Since Controller is set to false,
+			// deleting the Solution will NOT delete tracked resources in a real cluster.
 		})
 	})
 })
