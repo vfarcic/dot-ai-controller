@@ -84,7 +84,21 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
-	// Standard Kubebuilder approach: Always cleanup the Kind cluster
+	// Skip cleanup in CI environments - the VM gets destroyed anyway
+	// This saves time and avoids errors from trying to uninstall from deleted clusters
+	if os.Getenv("CI") == "true" {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping cleanup in CI environment (VM will be destroyed)\n")
+		return
+	}
+
+	// For local development: cleanup in correct order
+	// 1. First uninstall CertManager (before deleting the cluster)
+	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
+		utils.UninstallCertManager()
+	}
+
+	// 2. Then delete the Kind cluster
 	By("Cleaning up Kind cluster")
 	clusterName := os.Getenv("KIND_CLUSTER")
 	if clusterName == "" {
@@ -92,10 +106,4 @@ var _ = AfterSuite(func() {
 	}
 	cmd := exec.Command("kind", "delete", "cluster", "--name", clusterName)
 	_, _ = utils.Run(cmd) // Ignore errors - cluster might not exist
-
-	// Teardown CertManager after the suite if not skipped and if it was not already installed
-	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
-		utils.UninstallCertManager()
-	}
 })
