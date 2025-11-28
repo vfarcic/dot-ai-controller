@@ -1,0 +1,323 @@
+# PRD #11: Support Kubernetes Secret References for Webhook URLs
+
+**Status**: 📋 Planning
+**Priority**: High
+**Created**: 2025-11-28
+**Target Release**: v0.19.0
+
+## Problem Statement
+
+Webhook URLs for Slack and Google Chat notifications are currently stored as plain text in RemediationPolicy CRD specs. This creates several security concerns:
+
+1. **Credential Exposure**: Webhook URLs are visible to anyone with read access to RemediationPolicy resources
+2. **Version Control Risk**: URLs may be committed to Git repositories
+3. **RBAC Limitations**: Cannot leverage Kubernetes Secret RBAC for granular access control
+4. **Audit Trail Gaps**: Secret changes are not tracked via Secret audit mechanisms
+5. **Rotation Challenges**: Changing webhook URLs requires updating all RemediationPolicy CRs
+
+This violates Kubernetes security best practices for handling sensitive credentials.
+
+## User Stories
+
+### Primary Users: Platform Engineers & SRE Teams
+
+**Story 1: Secure Credential Storage**
+> As a platform engineer, I want to store webhook URLs in Kubernetes Secrets so that they're not exposed in CR definitions or version control.
+
+**Story 2: RBAC Control**
+> As a security admin, I want to control webhook URL access using Secret RBAC so that only authorized services can access notification credentials.
+
+**Story 3: Credential Rotation**
+> As an SRE, I want to rotate webhook URLs by updating a Secret so that I don't need to modify multiple RemediationPolicy resources.
+
+**Story 4: Multi-Environment Management**
+> As a DevOps engineer, I want to use the same RemediationPolicy manifest across environments with environment-specific Secrets so that my GitOps workflow is clean and secure.
+
+## Proposed Solution
+
+### Overview
+
+Add support for Kubernetes Secret references in notification configuration while maintaining backward compatibility with plain text webhook URLs.
+
+### Key Design Decisions
+
+1. **New Field**: Add `webhookUrlSecretRef` field alongside existing `webhookUrl`
+2. **Deprecation Strategy**: Mark `webhookUrl` as deprecated with runtime warnings
+3. **Preference Logic**: If both fields present, prefer Secret reference
+4. **Namespace Assumption**: Secret must exist in same namespace as RemediationPolicy (no namespace field)
+5. **Documentation Cleanup**: Remove plain text URLs from all docs/examples
+6. **Backward Compatibility**: Keep `webhookUrl` working indefinitely (separate PRD for removal)
+
+### API Changes
+
+#### New Type: SecretReference
+```go
+// SecretReference references a key in a Kubernetes Secret
+type SecretReference struct {
+    // Name of the secret in the same namespace as the RemediationPolicy
+    // +required
+    Name string `json:"name"`
+
+    // Key within the secret containing the webhook URL
+    // +required
+    Key string `json:"key"`
+}
+```
+
+#### Updated SlackConfig
+```go
+type SlackConfig struct {
+    Enabled bool `json:"enabled,omitempty"`
+
+    // WebhookUrl - DEPRECATED: Use webhookUrlSecretRef instead
+    // Plain text webhook URL (discouraged for security reasons)
+    // +optional
+    WebhookUrl string `json:"webhookUrl,omitempty"`
+
+    // WebhookUrlSecretRef - Kubernetes Secret reference (recommended)
+    // References a Secret in the same namespace as the RemediationPolicy
+    // +optional
+    WebhookUrlSecretRef *SecretReference `json:"webhookUrlSecretRef,omitempty"`
+
+    Channel          string `json:"channel,omitempty"`
+    NotifyOnStart    bool   `json:"notifyOnStart,omitempty"`
+    NotifyOnComplete bool   `json:"notifyOnComplete,omitempty"`
+}
+```
+
+#### Updated GoogleChatConfig
+```go
+type GoogleChatConfig struct {
+    Enabled bool `json:"enabled,omitempty"`
+
+    // WebhookUrl - DEPRECATED: Use webhookUrlSecretRef instead
+    // Plain text webhook URL (discouraged for security reasons)
+    // +optional
+    WebhookUrl string `json:"webhookUrl,omitempty"`
+
+    // WebhookUrlSecretRef - Kubernetes Secret reference (recommended)
+    // References a Secret in the same namespace as the RemediationPolicy
+    // +optional
+    WebhookUrlSecretRef *SecretReference `json:"webhookUrlSecretRef,omitempty"`
+
+    NotifyOnStart    bool `json:"notifyOnStart,omitempty"`
+    NotifyOnComplete bool `json:"notifyOnComplete,omitempty"`
+}
+```
+
+### Controller Changes
+
+#### Secret Resolution Helper
+```go
+func (r *RemediationPolicyReconciler) resolveWebhookUrl(
+    ctx context.Context,
+    namespace string,
+    plainUrl string,
+    secretRef *SecretReference,
+    serviceType string, // "Slack" or "Google Chat"
+) (string, error)
+```
+
+**Logic**:
+1. If both provided: log warning, prefer Secret reference
+2. If Secret reference provided: resolve from Secret
+3. If plain URL provided: log deprecation warning, return plain URL
+4. If neither provided: return empty string (will be caught by existing validation)
+
+#### RBAC Updates
+Add controller permission to read Secrets in RemediationPolicy namespaces:
+```go
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+```
+
+#### Validation Updates
+- Accept both fields (backward compatibility)
+- Validate Secret reference format if provided
+- Maintain existing URL format validation for plain text
+- Add deprecation warnings to controller logs
+
+### Example Usage
+
+#### Secure Configuration (Recommended)
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notification-webhooks
+  namespace: dot-ai
+type: Opaque
+stringData:
+  slack-url: "https://hooks.slack.com/services/T00/B00/xxx"
+  gchat-url: "https://chat.googleapis.com/v1/spaces/xxx"
+---
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: RemediationPolicy
+metadata:
+  name: secure-policy
+  namespace: dot-ai
+spec:
+  eventSelectors:
+    - type: Warning
+  mcpEndpoint: http://dot-ai.127.0.0.1.nip.io/api/v1/tools/remediate
+  notifications:
+    slack:
+      enabled: true
+      webhookUrlSecretRef:
+        name: notification-webhooks
+        key: slack-url
+      channel: "#alerts"
+    googleChat:
+      enabled: true
+      webhookUrlSecretRef:
+        name: notification-webhooks
+        key: gchat-url
+```
+
+#### Legacy Configuration (Deprecated but Supported)
+```yaml
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: RemediationPolicy
+metadata:
+  name: legacy-policy
+  namespace: dot-ai
+spec:
+  eventSelectors:
+    - type: Warning
+  mcpEndpoint: http://dot-ai.127.0.0.1.nip.io/api/v1/tools/remediate
+  notifications:
+    slack:
+      enabled: true
+      webhookUrl: "https://hooks.slack.com/services/T00/B00/xxx"  # DEPRECATED
+      channel: "#alerts"
+```
+
+**Controller Log Output**:
+```
+WARN Slack webhook URL using deprecated plain text field
+     Migrate to webhookUrlSecretRef for better security
+     policy="legacy-policy" namespace="dot-ai"
+```
+
+## Success Criteria
+
+### Functional Requirements
+- ✅ Secret references work for both Slack and Google Chat
+- ✅ Secret must be in same namespace as RemediationPolicy
+- ✅ Plain text URLs continue to work (backward compatibility)
+- ✅ Secret reference preferred when both fields present
+- ✅ Deprecation warnings logged when plain text used
+- ✅ Controller has appropriate RBAC for Secret access
+- ✅ Clear error messages for Secret resolution failures
+
+### Documentation Requirements
+- ✅ All examples use Secret references (no plain text URLs)
+- ✅ Sample Secret manifests provided
+- ✅ Security best practices documented
+- ✅ Migration path clearly explained
+- ✅ Deprecation warnings documented
+
+### Testing Requirements
+- ✅ Unit tests for Secret resolution logic
+- ✅ Unit tests for validation (both fields, neither, preference)
+- ✅ Integration tests with actual Secrets
+- ✅ E2E tests for Secret-based notifications
+- ✅ Backward compatibility tests (plain URLs still work)
+- ✅ Error handling tests (Secret not found, key missing, etc.)
+
+## Technical Implementation
+
+### Milestones
+
+- [ ] **Milestone 1: API Changes Complete**
+  - Add SecretReference type to API
+  - Update SlackConfig and GoogleChatConfig with new field
+  - Add deprecation comments to webhookUrl fields
+  - Run `make generate manifests` to update CRDs
+  - All API changes committed and CRDs regenerated
+
+- [ ] **Milestone 2: Controller Secret Resolution Working**
+  - Implement resolveWebhookUrl helper function
+  - Add RBAC markers for Secret access
+  - Update sendSlackNotification to use resolver
+  - Update sendGoogleChatNotification to use resolver
+  - Add deprecation warning logs
+  - Secret-based notifications functional in local testing
+
+- [ ] **Milestone 3: Validation and Error Handling Complete**
+  - Update validation functions for new field
+  - Implement preference logic (Secret over plain text)
+  - Add clear error messages for Secret resolution failures
+  - Handle edge cases (Secret not found, key missing, invalid data)
+  - All validation scenarios working correctly
+
+- [ ] **Milestone 4: Comprehensive Test Coverage**
+  - Unit tests for Secret resolution (all scenarios)
+  - Unit tests for validation logic
+  - Unit tests for preference logic
+  - Integration tests with Secrets
+  - Backward compatibility tests
+  - All tests passing with >80% coverage
+
+- [ ] **Milestone 5: Documentation Updated**
+  - Update config/samples/remediationpolicy_comprehensive.yaml to use Secrets
+  - Create example Secret manifest
+  - Remove plain text URLs from all documentation
+  - Add security best practices guide
+  - Document deprecation warnings
+  - Add troubleshooting section for Secret issues
+  - All user-facing docs use Secret references
+
+- [ ] **Milestone 6: Feature Released**
+  - All tests passing
+  - Documentation complete
+  - CHANGELOG.md updated
+  - Version bumped to v0.19.0
+  - Feature merged and tagged
+
+## Dependencies
+
+### Internal Dependencies
+- Existing notification infrastructure (Slack, Google Chat)
+- RBAC configuration system
+- Validation framework
+
+### External Dependencies
+- Kubernetes client-go Secret APIs
+- No new external service dependencies
+
+## Risks and Mitigations
+
+| Risk | Impact | Likelihood | Mitigation |
+|------|--------|-----------|------------|
+| Breaking existing deployments | High | Low | Maintain backward compatibility, plain URLs keep working |
+| Secret not found errors | Medium | Medium | Clear error messages, documentation on Secret setup |
+| RBAC permission issues | Medium | Medium | Document required RBAC, provide examples |
+| Users unaware of deprecation | Low | High | Runtime warnings logged, docs updated prominently |
+| Secret in wrong namespace | Medium | Medium | Enforce same-namespace requirement, clear error messages |
+
+## Timeline
+
+- **Week 1**: API changes and CRD generation (Milestones 1-2)
+- **Week 2**: Controller updates and validation (Milestone 3)
+- **Week 3**: Comprehensive testing (Milestone 4)
+- **Week 4**: Documentation and release (Milestones 5-6)
+
+**Target Release Date**: 2-3 weeks from start
+
+## Open Questions
+
+None - all design decisions clarified.
+
+## Related Work
+
+- **Issue #9**: Original feature request from @barth12
+- **Future PRD**: Separate PRD to be created for webhookUrl removal (6 months timeline)
+- **Security Best Practices**: Aligns with Kubernetes Secret management patterns
+
+## Progress Log
+
+### 2025-11-28
+- PRD created
+- Issue #11 opened
+- Design decisions finalized with clear backward compatibility strategy
+- Ready for implementation
