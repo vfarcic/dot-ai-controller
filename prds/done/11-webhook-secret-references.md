@@ -122,7 +122,7 @@ func (r *RemediationPolicyReconciler) resolveWebhookUrl(
 1. If both provided: log warning, prefer Secret reference
 2. If Secret reference provided: resolve from Secret
 3. If plain URL provided: log deprecation warning, return plain URL
-4. If neither provided: return empty string (will be caught by existing validation)
+4. If neither provided: return an error indicating that no webhook URL is configured
 
 #### RBAC Updates
 Add controller permission to read Secrets in RemediationPolicy namespaces:

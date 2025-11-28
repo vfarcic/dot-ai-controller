@@ -372,8 +372,6 @@ rateLimiting:
 
 You can configure Slack, Google Chat, or both simultaneously.
 
-**IMPORTANT**: Use `webhookUrlSecretRef` (recommended) to store webhook URLs securely in Kubernetes Secrets instead of plain text. See the [Security Best Practices](#security-best-practices) section below.
-
 ```yaml
 # First, create Secrets for your webhook URLs:
 # kubectl create secret generic slack-webhook --from-literal=url="https://hooks.slack.com/services/..." --namespace dot-ai
@@ -547,7 +545,7 @@ kubectl logs --selector app.kubernetes.io/name=dot-ai-controller --namespace dot
 
 5. Check NotificationsHealthy status condition:
 ```bash
-kubectl describe remediationpolicy sample-policy --namespace dot-ai | grep -A5 "Notifications Healthy"
+kubectl describe remediationpolicy sample-policy --namespace dot-ai | grep -A5 "NotificationsHealthy"
 ```
 
 ### Secret Resolution Errors
