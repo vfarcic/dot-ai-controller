@@ -52,6 +52,12 @@ type EventSelector struct {
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
+	// Message pattern to match against event message (supports regex)
+	// If specified, only events whose message matches this regex pattern will be selected
+	// Empty string acts as wildcard (matches all messages)
+	// +optional
+	Message string `json:"message,omitempty"`
+
 	// Remediation mode for this specific selector: "manual" or "automatic"
 	// Overrides the global policy mode when specified
 	// +kubebuilder:validation:Enum=manual;automatic

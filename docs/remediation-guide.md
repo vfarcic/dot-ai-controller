@@ -331,6 +331,64 @@ eventSelectors:
 
 **Important**: Selectors are evaluated in order. The first matching selector's configuration is used.
 
+### Message Filtering
+
+Filter events based on message content using regex patterns:
+
+```yaml
+eventSelectors:
+  - type: Warning
+    reason: BackOff
+    message: "pulling image.*nginx"     # Regex pattern to match event message
+```
+
+**Pattern Syntax**: Uses Go regex syntax (RE2). Common patterns:
+- `.*` - Match any characters
+- `^` - Start of string
+- `$` - End of string
+- `(?i)` - Case-insensitive flag
+- `[0-9]+` - One or more digits
+
+**Examples**:
+
+```yaml
+# Match specific image pull failures
+eventSelectors:
+  - type: Warning
+    reason: BackOff
+    message: "Failed to pull image.*postgres"
+
+# Match any error code in message
+eventSelectors:
+  - type: Warning
+    message: "error code [0-9]+"
+
+# Case-insensitive matching for timeout messages
+eventSelectors:
+  - type: Warning
+    message: "(?i)timeout"
+
+# Match OOMKilled messages
+eventSelectors:
+  - type: Warning
+    reason: BackOff
+    involvedObjectKind: Pod
+    message: "Container.*was OOMKilled"
+
+# Combine filters - match BackOff events with specific messages
+eventSelectors:
+  - type: Warning
+    reason: BackOff
+    involvedObjectKind: Pod
+    namespace: preprod
+    message: "Back-off.*pulling image"
+    mode: manual
+    confidenceThreshold: 0.85
+    maxRiskLevel: medium
+```
+
+**Wildcard**: Empty or omitted `message` field matches all events (no message filtering).
+
 ### Mode Configuration
 
 ```yaml
