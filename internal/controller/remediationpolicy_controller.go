@@ -25,6 +25,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -509,6 +510,22 @@ func (r *RemediationPolicyReconciler) matchesSelector(event *corev1.Event, selec
 	// Check namespace
 	if selector.Namespace != "" && event.Namespace != selector.Namespace {
 		return false
+	}
+
+	// Check message pattern
+	if selector.Message != "" {
+		matched, err := regexp.MatchString(selector.Message, event.Message)
+		if err != nil {
+			// Invalid regex pattern - log error and treat as non-match
+			// This prevents invalid patterns from blocking all events
+			logger := logf.FromContext(context.Background())
+			logger.Error(err, "Invalid regex pattern in message selector",
+				"pattern", selector.Message)
+			return false
+		}
+		if !matched {
+			return false
+		}
 	}
 
 	return true

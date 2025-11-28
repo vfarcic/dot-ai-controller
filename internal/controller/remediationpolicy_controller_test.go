@@ -200,6 +200,66 @@ var _ = Describe("RemediationPolicy Controller", func() {
 				Expect(matches).To(BeTrue())
 			})
 		})
+
+		Context("When filtering by message", func() {
+			BeforeEach(func() {
+				policy.Spec.EventSelectors = []dotaiv1alpha1.EventSelector{
+					{
+						Type:    "Warning",
+						Message: "Back-off.*pulling image",
+					},
+				}
+				event.Type = "Warning"
+				event.Message = "Back-off 5m0s restarting failed container=nginx pod=nginx-7d5c4c7d4d-abc12 pulling image nginx:latest"
+			})
+
+			It("should match events with message matching regex pattern", func() {
+				matches := reconciler.matchesPolicy(event, policy)
+				Expect(matches).To(BeTrue())
+			})
+
+			It("should not match events with non-matching message", func() {
+				event.Message = "Failed to pull image nginx:latest"
+				matches := reconciler.matchesPolicy(event, policy)
+				Expect(matches).To(BeFalse())
+			})
+
+			It("should match events when message field is empty (wildcard)", func() {
+				policy.Spec.EventSelectors[0].Message = ""
+				event.Message = "Any message content"
+				matches := reconciler.matchesPolicy(event, policy)
+				Expect(matches).To(BeTrue())
+			})
+
+			It("should not match events with invalid regex pattern", func() {
+				policy.Spec.EventSelectors[0].Message = "[invalid(regex"
+				matches := reconciler.matchesPolicy(event, policy)
+				Expect(matches).To(BeFalse())
+			})
+
+			It("should support case-sensitive matching", func() {
+				policy.Spec.EventSelectors[0].Message = "back-off" // lowercase
+				event.Message = "Back-off pulling image"           // uppercase B
+				matches := reconciler.matchesPolicy(event, policy)
+				Expect(matches).To(BeFalse())
+			})
+
+			It("should support case-insensitive regex with (?i) flag", func() {
+				policy.Spec.EventSelectors[0].Message = "(?i)back-off"
+				event.Message = "Back-off pulling image"
+				matches := reconciler.matchesPolicy(event, policy)
+				Expect(matches).To(BeTrue())
+			})
+
+			It("should work with combined filters", func() {
+				policy.Spec.EventSelectors[0].Reason = "BackOff"
+				policy.Spec.EventSelectors[0].InvolvedObjectKind = "Pod"
+				event.Reason = "BackOff"
+				event.InvolvedObject.Kind = "Pod"
+				matches := reconciler.matchesPolicy(event, policy)
+				Expect(matches).To(BeTrue())
+			})
+		})
 	})
 
 	Describe("Event Deduplication", func() {
