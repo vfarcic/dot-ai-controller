@@ -6,8 +6,9 @@ namespace: dot-ai
 resources:
 # Create namespace first
 - namespace.yaml
-# RemediationPolicy samples
-- remediationpolicy_comprehensive.yaml
+# RemediationPolicy samples (in subdirectory)
+- remediation/remediation_webhook_secrets.yaml
+- remediation/remediation_comprehensive.yaml
 # Solution samples (in subdirectory)
 - solution/solution_simple_resources.yaml
 - solution/solution_simple.yaml

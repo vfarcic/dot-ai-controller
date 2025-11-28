@@ -25,8 +25,11 @@ The RemediationPolicy CRD monitors Kubernetes events and forwards them to the De
 Create a RemediationPolicy to start processing events:
 
 ```bash
-# Set your Slack webhook URL (optional)
-export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+# First, create a Secret containing your Slack webhook URL (recommended)
+# See config/samples/remediation/remediation_webhook_secrets.yaml for more examples
+kubectl create secret generic slack-webhook \
+  --from-literal=url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+  --namespace dot-ai
 
 # Apply the policy
 kubectl apply --filename - <<EOF
@@ -72,7 +75,9 @@ spec:
   notifications:
     slack:
       enabled: true                    # Enable Slack notifications
-      webhookUrl: "$SLACK_WEBHOOK_URL" # Your webhook URL
+      webhookUrlSecretRef:             # Reference to Secret containing webhook URL
+        name: slack-webhook            # Secret name (must be in same namespace)
+        key: url                       # Key within the Secret
       channel: "#alerts"               # Channel where notifications will be sent
       notifyOnStart: true              # Notify when remediation starts
       notifyOnComplete: true           # Notify when remediation completes
@@ -365,21 +370,29 @@ rateLimiting:
 
 ### Notifications
 
-You can configure Slack, Google Chat, or both simultaneously:
+You can configure Slack, Google Chat, or both simultaneously.
 
 ```yaml
+# First, create Secrets for your webhook URLs:
+# kubectl create secret generic slack-webhook --from-literal=url="https://hooks.slack.com/services/..." --namespace dot-ai
+# kubectl create secret generic gchat-webhook --from-literal=url="https://chat.googleapis.com/v1/spaces/..." --namespace dot-ai
+
 notifications:
   # Slack notifications
   slack:
     enabled: true
-    webhookUrl: "https://hooks.slack.com/services/..."
+    webhookUrlSecretRef:             # RECOMMENDED: Use Secret reference
+      name: slack-webhook            # Secret name (must be in same namespace)
+      key: url                       # Key within the Secret
     channel: "#alerts"
     notifyOnStart: true              # Notify when remediation starts
     notifyOnComplete: true           # Notify when remediation completes
   # Google Chat notifications (requires Google Workspace paid account)
   googleChat:
     enabled: true
-    webhookUrl: "https://chat.googleapis.com/v1/spaces/..."
+    webhookUrlSecretRef:             # RECOMMENDED: Use Secret reference
+      name: gchat-webhook            # Secret name (must be in same namespace)
+      key: url                       # Key within the Secret
     notifyOnStart: true              # Notify when remediation starts
     notifyOnComplete: true           # Notify when remediation completes
 ```
@@ -504,21 +517,82 @@ kubectl logs --selector app.kubernetes.io/name=dot-ai-controller --namespace dot
 
 ### Slack Notifications Not Received
 
-1. Verify webhook URL is correct:
+1. Verify Secret exists and contains webhook URL:
 ```bash
-kubectl get remediationpolicy sample-policy --namespace dot-ai -o jsonpath='{.spec.notifications.slack.webhookUrl}'
+# Check if Secret exists
+kubectl get secret slack-webhook --namespace dot-ai
+
+# Verify Secret contains the url key (webhook URL will be base64 encoded)
+kubectl get secret slack-webhook --namespace dot-ai -o jsonpath='{.data.url}' | base64 -d
 ```
 
-2. Test webhook manually:
+2. Test webhook manually (use decoded URL from step 1):
 ```bash
 curl -X POST -H 'Content-type: application/json' \
   --data '{"text":"Test notification"}' \
   YOUR_WEBHOOK_URL
 ```
 
-3. Check controller logs:
+3. Check RemediationPolicy references the correct Secret:
 ```bash
-kubectl logs --selector app.kubernetes.io/name=dot-ai-controller --namespace dot-ai | grep -i slack
+kubectl get remediationpolicy sample-policy --namespace dot-ai -o yaml | grep -A2 webhookUrlSecretRef
+```
+
+4. Check controller logs for Secret resolution errors:
+```bash
+kubectl logs --selector app.kubernetes.io/name=dot-ai-controller --namespace dot-ai | grep -i "slack\|secret"
+```
+
+5. Check NotificationsHealthy status condition:
+```bash
+kubectl describe remediationpolicy sample-policy --namespace dot-ai | grep -A5 "NotificationsHealthy"
+```
+
+### Secret Resolution Errors
+
+If you see errors related to Secret resolution in controller logs or status conditions:
+
+**Error: "Secret not found"**
+```bash
+# Verify the Secret exists in the correct namespace
+kubectl get secret slack-webhook --namespace dot-ai
+
+# If missing, create it:
+kubectl create secret generic slack-webhook \
+  --from-literal=url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+  --namespace dot-ai
+```
+
+**Error: "Key not found in Secret"**
+```bash
+# Check what keys exist in the Secret
+kubectl get secret slack-webhook --namespace dot-ai -o jsonpath='{.data}' | jq 'keys'
+
+# The Secret must contain the key specified in webhookUrlSecretRef.key
+# Default key is "url" - ensure your Secret uses this key or update the CR
+```
+
+**Error: "Secret must be in the same namespace"**
+```bash
+# Secrets must be in the same namespace as the RemediationPolicy CR
+# Check RemediationPolicy namespace:
+kubectl get remediationpolicy sample-policy --all-namespaces
+
+# Ensure Secret is in the same namespace:
+kubectl get secret slack-webhook --namespace dot-ai
+```
+
+**Webhook URL is empty or invalid**
+```bash
+# Verify the Secret contains a valid URL
+kubectl get secret slack-webhook --namespace dot-ai -o jsonpath='{.data.url}' | base64 -d
+
+# Should output a full webhook URL starting with https://
+# If empty or malformed, update the Secret:
+kubectl create secret generic slack-webhook \
+  --from-literal=url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+  --namespace dot-ai \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
 ### Rate Limiting Issues

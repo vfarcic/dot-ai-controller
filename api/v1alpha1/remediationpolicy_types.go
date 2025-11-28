@@ -23,6 +23,17 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// SecretReference references a key in a Kubernetes Secret
+type SecretReference struct {
+	// Name of the secret in the same namespace as the RemediationPolicy
+	// +required
+	Name string `json:"name"`
+
+	// Key within the secret containing the webhook URL
+	// +required
+	Key string `json:"key"`
+}
+
 // EventSelector defines criteria for selecting Kubernetes events
 type EventSelector struct {
 	// Type of event (Warning, Normal)
@@ -81,9 +92,15 @@ type SlackConfig struct {
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// Slack webhook URL (required when enabled)
+	// WebhookUrl - DEPRECATED: Use webhookUrlSecretRef instead
+	// Plain text webhook URL (discouraged for security reasons)
 	// +optional
 	WebhookUrl string `json:"webhookUrl,omitempty"`
+
+	// WebhookUrlSecretRef - Kubernetes Secret reference (recommended)
+	// References a Secret in the same namespace as the RemediationPolicy
+	// +optional
+	WebhookUrlSecretRef *SecretReference `json:"webhookUrlSecretRef,omitempty"`
 
 	// Slack channel (for display purposes only)
 	// +optional
@@ -107,10 +124,16 @@ type GoogleChatConfig struct {
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// Google Chat webhook URL (required when enabled)
+	// WebhookUrl - DEPRECATED: Use webhookUrlSecretRef instead
+	// Plain text webhook URL (discouraged for security reasons)
 	// Must start with https://chat.googleapis.com/
 	// +optional
 	WebhookUrl string `json:"webhookUrl,omitempty"`
+
+	// WebhookUrlSecretRef - Kubernetes Secret reference (recommended)
+	// References a Secret in the same namespace as the RemediationPolicy
+	// +optional
+	WebhookUrlSecretRef *SecretReference `json:"webhookUrlSecretRef,omitempty"`
 
 	// Notify when remediation starts (optional, default false)
 	// +kubebuilder:default=false

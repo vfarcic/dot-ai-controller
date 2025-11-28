@@ -1,0 +1,15 @@
+# Kustomization for RemediationPolicy samples only
+# Deploy with: kubectl apply -k config/samples/remediation/
+
+apiVersion: kustomize.config.k8s.io/v1
+kind: Kustomization
+
+namespace: dot-ai
+
+resources:
+  # Create namespace
+  - namespace.yaml
+  # Create webhook Secret (required for RemediationPolicy)
+  - remediation_webhook_secrets.yaml
+  # Create RemediationPolicy CR
+  - remediation_comprehensive.yaml
