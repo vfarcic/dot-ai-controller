@@ -161,9 +161,27 @@ spec:
                         type: boolean
                       webhookUrl:
                         description: |-
-                          Google Chat webhook URL (required when enabled)
+                          WebhookUrl - DEPRECATED: Use webhookUrlSecretRef instead
+                          Plain text webhook URL (discouraged for security reasons)
                           Must start with https://chat.googleapis.com/
                         type: string
+                      webhookUrlSecretRef:
+                        description: |-
+                          WebhookUrlSecretRef - Kubernetes Secret reference (recommended)
+                          References a Secret in the same namespace as the RemediationPolicy
+                        properties:
+                          key:
+                            description: Key within the secret containing the webhook
+                              URL
+                            type: string
+                          name:
+                            description: Name of the secret in the same namespace
+                              as the RemediationPolicy
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
                     type: object
                   slack:
                     description: Slack notification configuration
@@ -185,8 +203,27 @@ spec:
                           false)
                         type: boolean
                       webhookUrl:
-                        description: Slack webhook URL (required when enabled)
+                        description: |-
+                          WebhookUrl - DEPRECATED: Use webhookUrlSecretRef instead
+                          Plain text webhook URL (discouraged for security reasons)
                         type: string
+                      webhookUrlSecretRef:
+                        description: |-
+                          WebhookUrlSecretRef - Kubernetes Secret reference (recommended)
+                          References a Secret in the same namespace as the RemediationPolicy
+                        properties:
+                          key:
+                            description: Key within the secret containing the webhook
+                              URL
+                            type: string
+                          name:
+                            description: Name of the secret in the same namespace
+                              as the RemediationPolicy
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
                     type: object
                 type: object
               rateLimiting:
