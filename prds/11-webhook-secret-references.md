@@ -228,7 +228,7 @@ WARN Slack webhook URL using deprecated plain text field
 
 ### Milestones
 
-- [ ] **Milestone 1: API Changes Complete**
+- [x] **Milestone 1: API Changes Complete**
   - Add SecretReference type to API
   - Update SlackConfig and GoogleChatConfig with new field
   - Add deprecation comments to webhookUrl fields
@@ -323,3 +323,4 @@ None - all design decisions clarified.
 - Ready for implementation
 - Implementation started: feature branch created
 - PRD readiness validated: all dependencies available, API structure reviewed
+- ✅ Milestone 1 completed: API changes, CRD generation, and verification successful
