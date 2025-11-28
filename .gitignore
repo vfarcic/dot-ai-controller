@@ -13,3 +13,4 @@ cover.out
 
 # Kubernetes test environment
 testbin/
+kind.yaml

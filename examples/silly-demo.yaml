@@ -1,0 +1,129 @@
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: Solution
+metadata:
+  name: silly-demo
+spec:
+  intent: "Deploy a demo web application with persistent storage, PostgreSQL database, and public ingress access"
+  resources:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: silly-demo
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      name: silly-demo
+    - apiVersion: v1
+      kind: Service
+      name: silly-demo
+    - apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      name: silly-demo
+    - apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      name: silly-demo-db
+  context:
+    createdBy: "vfarcic"
+    rationale: "A Silly Demo stack that was made for no particular reason than to demonstrate that some things in Kubernetes are silly"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: silly-demo
+  name: silly-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: silly-demo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: silly-demo
+    spec:
+      containers:
+      - image: ghcr.io/vfarcic/silly-demo:v1.5.214
+        livenessProbe:
+          failureThreshold: 10
+          httpGet:
+            path: /
+            port: 8080
+        name: main
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          failureThreshold: 10
+          httpGet:
+            path: /
+            port: 8080
+        resources:
+          limits:
+            memory: '256Mi'
+          requests:
+            cpu: '125m'
+            memory: '128Mi'
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      shareProcessNamespace: true
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: silly-demo
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app.kubernetes.io/name: silly-demo
+  name: silly-demo
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: silly-demo
+  name: silly-demo
+spec:
+  ports:
+  - name: http
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app.kubernetes.io/name: silly-demo
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  labels:
+    app.kubernetes.io/name: silly-demo
+  name: silly-demo
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: silly-demo.127.0.0.1.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: silly-demo
+            port:
+              number: 8080
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: silly-demo-db
+spec:
+  instances: 1
+  storage:
+    size: 0.1Gi
