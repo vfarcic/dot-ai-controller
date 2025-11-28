@@ -1753,7 +1753,7 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				err := reconciler.validateSlackConfiguration(testPolicy)
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("Slack webhook URL is required"))
+				Expect(err.Error()).To(ContainSubstring("Slack webhook URL or webhookUrlSecretRef is required"))
 			})
 
 			It("should reject invalid webhook URL format", func() {
@@ -2364,7 +2364,7 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 				err := reconciler.validateGoogleChatConfiguration(testPolicy)
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("Google Chat webhook URL is required"))
+				Expect(err.Error()).To(ContainSubstring("Google Chat webhook URL or webhookUrlSecretRef is required"))
 			})
 
 			It("should reject invalid webhook URL format", func() {
