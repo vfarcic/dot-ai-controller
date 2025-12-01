@@ -3420,6 +3420,104 @@ var _ = Describe("RemediationPolicy Controller", func() {
 			_ = k8sClient.Delete(ctx, ns)
 		})
 
+		Describe("parseCronJobNameFromPodName", func() {
+			Context("with valid CronJob pod name patterns", func() {
+				It("should parse simple CronJob name", func() {
+					name, ok := parseCronJobNameFromPodName("my-backup-29409620-abc12")
+					Expect(ok).To(BeTrue())
+					Expect(name).To(Equal("my-backup"))
+				})
+
+				It("should parse CronJob name with hyphens", func() {
+					name, ok := parseCronJobNameFromPodName("my-backup-job-29409620-abc12")
+					Expect(ok).To(BeTrue())
+					Expect(name).To(Equal("my-backup-job"))
+				})
+
+				It("should parse CronJob name with multiple hyphens", func() {
+					name, ok := parseCronJobNameFromPodName("database-cleanup-task-29409621-xyz99")
+					Expect(ok).To(BeTrue())
+					Expect(name).To(Equal("database-cleanup-task"))
+				})
+
+				It("should parse CronJob name with long timestamp", func() {
+					name, ok := parseCronJobNameFromPodName("simple-task-1234567890123-a1b2c")
+					Expect(ok).To(BeTrue())
+					Expect(name).To(Equal("simple-task"))
+				})
+
+				It("should handle single character suffix", func() {
+					name, ok := parseCronJobNameFromPodName("my-job-12345678-x")
+					Expect(ok).To(BeTrue())
+					Expect(name).To(Equal("my-job"))
+				})
+			})
+
+			Context("with invalid pod name patterns", func() {
+				It("should return false for too few segments", func() {
+					name, ok := parseCronJobNameFromPodName("simple-abc12")
+					Expect(ok).To(BeFalse())
+					Expect(name).To(Equal(""))
+				})
+
+				It("should return false for non-numeric timestamp", func() {
+					name, ok := parseCronJobNameFromPodName("my-job-notanumber-abc12")
+					Expect(ok).To(BeFalse())
+					Expect(name).To(Equal(""))
+				})
+
+				It("should return false for empty timestamp segment", func() {
+					name, ok := parseCronJobNameFromPodName("my-job--abc12")
+					Expect(ok).To(BeFalse())
+					Expect(name).To(Equal(""))
+				})
+
+				It("should return false for empty suffix segment", func() {
+					name, ok := parseCronJobNameFromPodName("my-job-12345678-")
+					Expect(ok).To(BeFalse())
+					Expect(name).To(Equal(""))
+				})
+
+				It("should return false for single segment name", func() {
+					name, ok := parseCronJobNameFromPodName("singlepod")
+					Expect(ok).To(BeFalse())
+					Expect(name).To(Equal(""))
+				})
+
+				It("should return false for two segment name", func() {
+					name, ok := parseCronJobNameFromPodName("my-pod")
+					Expect(ok).To(BeFalse())
+					Expect(name).To(Equal(""))
+				})
+
+				It("should return false for empty string", func() {
+					name, ok := parseCronJobNameFromPodName("")
+					Expect(ok).To(BeFalse())
+					Expect(name).To(Equal(""))
+				})
+
+				It("should return false when timestamp has letters", func() {
+					name, ok := parseCronJobNameFromPodName("my-job-123abc-xyz")
+					Expect(ok).To(BeFalse())
+					Expect(name).To(Equal(""))
+				})
+			})
+
+			Context("with edge cases", func() {
+				It("should handle numeric CronJob name", func() {
+					name, ok := parseCronJobNameFromPodName("123-29409620-abc12")
+					Expect(ok).To(BeTrue())
+					Expect(name).To(Equal("123"))
+				})
+
+				It("should handle CronJob name starting with number", func() {
+					name, ok := parseCronJobNameFromPodName("1st-backup-29409620-abc12")
+					Expect(ok).To(BeTrue())
+					Expect(name).To(Equal("1st-backup"))
+				})
+			})
+		})
+
 		Describe("resolveOwnerForRateLimiting", func() {
 			Context("when the involved object is not a Pod", func() {
 				It("should return empty kind and original name for Deployment", func() {
@@ -3450,7 +3548,7 @@ var _ = Describe("RemediationPolicy Controller", func() {
 			})
 
 			Context("when the Pod does not exist", func() {
-				It("should return empty kind and original pod name", func() {
+				It("should return empty kind and original pod name for non-CronJob pattern", func() {
 					involvedObject := corev1.ObjectReference{
 						Kind:      "Pod",
 						Name:      "non-existent-pod",
@@ -3461,6 +3559,60 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 					Expect(kind).To(Equal(""))
 					Expect(name).To(Equal("non-existent-pod"))
+				})
+
+				It("should parse CronJob name from deleted pod with CronJob naming pattern", func() {
+					involvedObject := corev1.ObjectReference{
+						Kind:      "Pod",
+						Name:      "my-backup-job-29409620-abc12",
+						Namespace: testNs,
+					}
+
+					kind, name := reconciler.resolveOwnerForRateLimiting(ctx, involvedObject)
+
+					Expect(kind).To(Equal("cronjob"))
+					Expect(name).To(Equal("my-backup-job"))
+				})
+
+				It("should parse CronJob name with hyphens from deleted pod", func() {
+					involvedObject := corev1.ObjectReference{
+						Kind:      "Pod",
+						Name:      "database-cleanup-task-29409621-xyz99",
+						Namespace: testNs,
+					}
+
+					kind, name := reconciler.resolveOwnerForRateLimiting(ctx, involvedObject)
+
+					Expect(kind).To(Equal("cronjob"))
+					Expect(name).To(Equal("database-cleanup-task"))
+				})
+
+				It("should fall back to original name when pattern has non-numeric timestamp", func() {
+					involvedObject := corev1.ObjectReference{
+						Kind:      "Pod",
+						Name:      "my-job-notanumber-abc12",
+						Namespace: testNs,
+					}
+
+					kind, name := reconciler.resolveOwnerForRateLimiting(ctx, involvedObject)
+
+					Expect(kind).To(Equal(""))
+					Expect(name).To(Equal("my-job-notanumber-abc12"))
+				})
+
+				It("should fall back to original name for standalone Job pod pattern", func() {
+					// Standalone jobs (not from CronJob) have pattern: {job-name}-{suffix}
+					// This has only 2 segments which doesn't match CronJob pattern
+					involvedObject := corev1.ObjectReference{
+						Kind:      "Pod",
+						Name:      "my-job-xyz12",
+						Namespace: testNs,
+					}
+
+					kind, name := reconciler.resolveOwnerForRateLimiting(ctx, involvedObject)
+
+					Expect(kind).To(Equal(""))
+					Expect(name).To(Equal("my-job-xyz12"))
 				})
 			})
 

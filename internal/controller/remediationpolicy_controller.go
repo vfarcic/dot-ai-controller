@@ -84,6 +84,44 @@ func (r *RemediationPolicyReconciler) isEventProcessed(eventKey string) bool {
 	return exists
 }
 
+// parseCronJobNameFromPodName attempts to extract a CronJob name from a pod name
+// that follows the pattern: {cronjob-name}-{timestamp}-{suffix}
+// where timestamp is numeric (Unix timestamp) and suffix is alphanumeric.
+// Returns the parsed name and true if successful, empty string and false otherwise.
+func parseCronJobNameFromPodName(podName string) (string, bool) {
+	segments := strings.Split(podName, "-")
+
+	// Need at least 3 segments: name + timestamp + suffix
+	if len(segments) < 3 {
+		return "", false
+	}
+
+	// Second-to-last segment must be numeric (timestamp)
+	timestampSegment := segments[len(segments)-2]
+	if len(timestampSegment) == 0 {
+		return "", false
+	}
+	for _, c := range timestampSegment {
+		if c < '0' || c > '9' {
+			return "", false
+		}
+	}
+
+	// Last segment is the random suffix (alphanumeric, typically 5 chars)
+	suffixSegment := segments[len(segments)-1]
+	if len(suffixSegment) == 0 {
+		return "", false
+	}
+
+	// Join all segments except last two to get CronJob name
+	cronJobName := strings.Join(segments[:len(segments)-2], "-")
+	if len(cronJobName) == 0 {
+		return "", false
+	}
+
+	return cronJobName, true
+}
+
 // resolveOwnerForRateLimiting resolves the ultimate owner for rate limiting purposes.
 // For Pods owned by Jobs/CronJobs, it returns the Job or CronJob name to ensure
 // all pods from the same Job/CronJob share the same rate limit key.
@@ -113,7 +151,15 @@ func (r *RemediationPolicyReconciler) resolveOwnerForRateLimiting(ctx context.Co
 	}
 
 	if err := r.Get(ctx, podKey, pod); err != nil {
-		// Pod not found or error - fall back to original name
+		// Pod not found - try to parse CronJob name from pod name pattern
+		if parsedName, ok := parseCronJobNameFromPodName(involvedObject.Name); ok {
+			logger.V(1).Info("Pod not found, parsed CronJob name from pod name pattern",
+				"pod", podKey,
+				"parsedCronJob", parsedName,
+				"error", err)
+			return "cronjob", parsedName
+		}
+		// Parsing failed - fall back to original name
 		logger.V(1).Info("Failed to fetch Pod for owner resolution, using pod name",
 			"pod", podKey,
 			"error", err)
