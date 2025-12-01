@@ -160,7 +160,9 @@ Test files follow Go convention: `*_test.go` alongside source files.
 
 - A task is NOT complete if any tests are failing, even if the core functionality works
 - Failing tests indicate incomplete implementation, insufficient test isolation, or bugs that must be addressed
-- Always run the full test suite (`go test ./...`) before declaring work finished
+- Always run `make test` (unit + integration) before declaring work finished
+- Run `make test-e2e` for e2e tests - this automatically creates the Kind cluster
+- **Do NOT use `go test ./...`** - this includes e2e tests but skips Kind cluster setup, causing failures
 - Fix all test failures before updating PRDs, documentation, or moving to next tasks
 - Test failures are as important as functionality - they ensure maintainability and regression prevention
 
