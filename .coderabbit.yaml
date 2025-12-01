@@ -1,0 +1,51 @@
+# CodeRabbit Configuration
+# Documentation: https://docs.coderabbit.ai/guides/configure-coderabbit
+
+reviews:
+  # Request changes only for critical/major issues
+  request_changes_workflow: true
+
+  # Reduce comment verbosity
+  high_level_summary: true
+  poem: false
+  review_status: false
+
+  # Collapse less important sections
+  collapse_walkthrough: true
+
+  # Skip generated and build files
+  path_filters:
+    - "!**/zz_generated*.go"
+    - "!**/*_generated.go"
+    - "!**/bin/**"
+    - "!**/dist/**"
+    - "!**/vendor/**"
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+
+  # Focus on important issues
+  tone_instructions: "Focus on critical bugs, security issues, and architectural concerns. Skip style nitpicks and minor improvements unless they significantly impact code quality or maintainability."
+
+language: "en-US"
+early_access: false
+
+# Path-specific instructions
+path_instructions:
+  - path: "**/*_test.go"
+    instructions: "Focus on test correctness and coverage gaps only. Skip style suggestions."
+
+  - path: "test/e2e/**"
+    instructions: "Only flag critical test bugs or missing coverage. Skip minor improvements."
+
+  - path: "prds/**"
+    instructions: "Only review for clarity and completeness. Skip markdown style suggestions."
+
+  - path: "config/**"
+    instructions: "Focus on correctness of Kubernetes manifests and Kustomize configurations."
+
+chat:
+  auto_reply: false

@@ -151,15 +151,17 @@ func (r *RemediationPolicyReconciler) resolveOwnerForRateLimiting(ctx context.Co
 	}
 
 	if err := r.Get(ctx, podKey, pod); err != nil {
-		// Pod not found - try to parse CronJob name from pod name pattern
-		if parsedName, ok := parseCronJobNameFromPodName(involvedObject.Name); ok {
-			logger.V(1).Info("Pod not found, parsed CronJob name from pod name pattern",
-				"pod", podKey,
-				"parsedCronJob", parsedName,
-				"error", err)
-			return "cronjob", parsedName
+		// Only try CronJob name parsing for NotFound errors (deleted pods)
+		// Other errors (transient API/RBAC issues) should fall back to original name
+		if apierrors.IsNotFound(err) {
+			if parsedName, ok := parseCronJobNameFromPodName(involvedObject.Name); ok {
+				logger.V(1).Info("Pod not found, parsed CronJob name from pod name pattern",
+					"pod", podKey,
+					"parsedCronJob", parsedName)
+				return "cronjob", parsedName
+			}
 		}
-		// Parsing failed - fall back to original name
+		// Parsing not applicable or failed - fall back to original name
 		logger.V(1).Info("Failed to fetch Pod for owner resolution, using pod name",
 			"pod", podKey,
 			"error", err)
