@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,6 +68,8 @@ type RemediationPolicyReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;create;update
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch
 
 // getEventKey creates a unique key for event deduplication
 func (r *RemediationPolicyReconciler) getEventKey(event *corev1.Event) string {
@@ -81,22 +84,119 @@ func (r *RemediationPolicyReconciler) isEventProcessed(eventKey string) bool {
 	return exists
 }
 
-// getRateLimitKey creates a unique key for rate limiting tracking
-func (r *RemediationPolicyReconciler) getRateLimitKey(policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event) string {
+// resolveOwnerForRateLimiting resolves the ultimate owner for rate limiting purposes.
+// For Pods owned by Jobs/CronJobs, it returns the Job or CronJob name to ensure
+// all pods from the same Job/CronJob share the same rate limit key.
+//
+// Owner resolution chain:
+//   - Pod -> Job -> CronJob: returns ("cronjob", cronjob-name)
+//   - Pod -> Job (no CronJob): returns ("job", job-name)
+//   - Pod (no Job owner): returns ("", pod-name)
+//   - Non-Pod resources: returns ("", object-name)
+func (r *RemediationPolicyReconciler) resolveOwnerForRateLimiting(ctx context.Context, involvedObject corev1.ObjectReference) (kind string, name string) {
+	logger := logf.FromContext(ctx)
+
+	// Default: use original object name with no kind prefix
+	name = involvedObject.Name
+	kind = ""
+
+	// Only resolve ownership for Pods
+	if involvedObject.Kind != "Pod" {
+		return kind, name
+	}
+
+	// Fetch the Pod to check its ownerReferences
+	pod := &corev1.Pod{}
+	podKey := client.ObjectKey{
+		Namespace: involvedObject.Namespace,
+		Name:      involvedObject.Name,
+	}
+
+	if err := r.Get(ctx, podKey, pod); err != nil {
+		// Pod not found or error - fall back to original name
+		logger.V(1).Info("Failed to fetch Pod for owner resolution, using pod name",
+			"pod", podKey,
+			"error", err)
+		return kind, name
+	}
+
+	// Look for Job owner
+	var jobOwnerRef *metav1.OwnerReference
+	for i := range pod.OwnerReferences {
+		if pod.OwnerReferences[i].Kind == "Job" {
+			jobOwnerRef = &pod.OwnerReferences[i]
+			break
+		}
+	}
+
+	if jobOwnerRef == nil {
+		// No Job owner - use pod name
+		return kind, name
+	}
+
+	// Found Job owner - fetch the Job to check for CronJob owner
+	job := &batchv1.Job{}
+	jobKey := client.ObjectKey{
+		Namespace: involvedObject.Namespace,
+		Name:      jobOwnerRef.Name,
+	}
+
+	if err := r.Get(ctx, jobKey, job); err != nil {
+		// Job not found or error - use Job name as fallback
+		logger.V(1).Info("Failed to fetch Job for owner resolution, using job name",
+			"job", jobKey,
+			"error", err)
+		return "job", jobOwnerRef.Name
+	}
+
+	// Look for CronJob owner
+	for _, ownerRef := range job.OwnerReferences {
+		if ownerRef.Kind == "CronJob" {
+			// Found CronJob owner - use CronJob name
+			logger.V(1).Info("Resolved owner chain for rate limiting",
+				"pod", involvedObject.Name,
+				"job", job.Name,
+				"cronjob", ownerRef.Name)
+			return "cronjob", ownerRef.Name
+		}
+	}
+
+	// Job has no CronJob owner - use Job name
+	logger.V(1).Info("Resolved owner for rate limiting",
+		"pod", involvedObject.Name,
+		"job", job.Name)
+	return "job", job.Name
+}
+
+// getRateLimitKey creates a unique key for rate limiting tracking.
+// For Pods owned by Jobs/CronJobs, the key uses the owner name instead of the pod name
+// to ensure all pods from the same Job/CronJob share the same rate limit bucket.
+func (r *RemediationPolicyReconciler) getRateLimitKey(ctx context.Context, policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event) string {
+	// Resolve owner for rate limiting (handles Job/CronJob ownership)
+	ownerKind, ownerName := r.resolveOwnerForRateLimiting(ctx, event.InvolvedObject)
+
+	// Build the object identifier with optional kind prefix
+	var objectIdentifier string
+	if ownerKind != "" {
+		objectIdentifier = fmt.Sprintf("%s:%s", ownerKind, ownerName)
+	} else {
+		objectIdentifier = ownerName
+	}
+
 	return fmt.Sprintf("%s/%s/%s/%s/%s",
 		policy.Namespace, policy.Name,
-		event.InvolvedObject.Namespace, event.InvolvedObject.Name,
+		event.InvolvedObject.Namespace, objectIdentifier,
 		event.Reason)
 }
 
 // isRateLimited checks if processing should be rate limited based on policy configuration
-func (r *RemediationPolicyReconciler) isRateLimited(policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event) (bool, string) {
+func (r *RemediationPolicyReconciler) isRateLimited(ctx context.Context, policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event) (bool, string) {
 	if policy.Spec.RateLimiting.EventsPerMinute == 0 && policy.Spec.RateLimiting.CooldownMinutes == 0 {
 		// No rate limiting configured
 		return false, ""
 	}
 
-	key := r.getRateLimitKey(policy, event)
+	key := r.getRateLimitKey(ctx, policy, event)
 	now := time.Now()
 
 	r.rateLimitMu.Lock()
@@ -927,7 +1027,7 @@ func (r *RemediationPolicyReconciler) reconcileEvent(ctx context.Context, event 
 			effectiveMode := r.getEffectiveMode(matchingSelector, &policy)
 
 			// Check rate limiting before processing
-			if rateLimited, reason := r.isRateLimited(&policy, event); rateLimited {
+			if rateLimited, reason := r.isRateLimited(ctx, &policy, event); rateLimited {
 				logger.Info("Event processing rate limited",
 					"policy", fmt.Sprintf("%s/%s", policy.Namespace, policy.Name),
 					"reason", reason,
