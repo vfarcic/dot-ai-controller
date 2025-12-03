@@ -112,6 +112,7 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
+        git pull --rebase origin main
         git add -A
         git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
         git push
