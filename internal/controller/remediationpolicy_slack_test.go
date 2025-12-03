@@ -59,7 +59,7 @@ var _ = Describe("RemediationPolicy Slack Notifications", func() {
 				response := createSuccessfulMcpResponse("Issue has been successfully resolved with 95% confidence", 2500.0)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(response)
+				_ = json.NewEncoder(w).Encode(response)
 			}))
 
 			// Create mock Slack server

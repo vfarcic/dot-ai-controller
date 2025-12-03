@@ -54,6 +54,7 @@ func (r *McpResponse) GetResultMessage() string {
 		}
 		// If no specific message field, return a generic success message with execution time
 		if r.Data.ExecutionTime > 0 {
+			// ExecutionTime is in milliseconds per MCP API spec
 			return fmt.Sprintf("remediation completed successfully (%.2fs)", r.Data.ExecutionTime/1000)
 		}
 		return "remediation completed successfully"
@@ -212,8 +213,8 @@ func (r *RemediationPolicyReconciler) sendMcpRequest(ctx context.Context, mcpReq
 		"contentLength", resp.Header.Get("Content-Length"))
 
 	// Read response body
+	defer resp.Body.Close()
 	responseBody, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
 	if err != nil {
 		logger.Error(err, "❌ Failed to read response body", "duration", requestDuration)
 		return nil, fmt.Errorf("failed to read response body: %w", err)

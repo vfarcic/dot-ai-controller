@@ -307,13 +307,12 @@ var _ = Describe("RemediationPolicy Google Chat Notifications", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(ctrl.Result{}))
 
-				// Give some time for any potential notifications
-				time.Sleep(500 * time.Millisecond)
-
 				// Verify no notifications were sent
-				googleChatMutex.RLock()
-				defer googleChatMutex.RUnlock()
-				Expect(len(googleChatRequests)).To(Equal(0))
+				Consistently(func() int {
+					googleChatMutex.RLock()
+					defer googleChatMutex.RUnlock()
+					return len(googleChatRequests)
+				}, "2s").Should(Equal(0))
 			})
 		})
 	})

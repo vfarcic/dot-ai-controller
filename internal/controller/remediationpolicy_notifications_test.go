@@ -57,7 +57,9 @@ var _ = Describe("RemediationPolicy Notifications", func() {
 					Name: nsName,
 				},
 			}
-			k8sClient.Delete(ctx, ns)
+			if err := k8sClient.Delete(ctx, ns); err != nil {
+				GinkgoWriter.Printf("Note: cleanup of namespace %s: %v\n", nsName, err)
+			}
 		}
 
 		Context("Secret reference provided", func() {
@@ -663,7 +665,9 @@ var _ = Describe("RemediationPolicy Notifications", func() {
 			// Create mock Slack server
 			slackServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var message SlackMessage
-				json.NewDecoder(r.Body).Decode(&message)
+				if err := json.NewDecoder(r.Body).Decode(&message); err != nil {
+					GinkgoWriter.Printf("Warning: failed to decode Slack message: %v\n", err)
+				}
 				slackMutex.Lock()
 				slackRequests = append(slackRequests, message)
 				slackMutex.Unlock()
