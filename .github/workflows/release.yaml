@@ -46,6 +46,12 @@ jobs:
         fetch-depth: 0  # Fetch all history for version calculation
         token: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Pull Latest Changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git pull --rebase origin main
+
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
@@ -110,9 +116,6 @@ jobs:
 
     - name: Commit Version Changes
       run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git pull --rebase origin main
         git add -A
         git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
         git push
