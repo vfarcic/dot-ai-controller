@@ -2615,10 +2615,10 @@ var _ = Describe("RemediationPolicy Controller", func() {
 
 	Describe("Secret-based Notification Integration", func() {
 		var (
-			slackServer    *httptest.Server
-			slackRequests  []SlackMessage
-			slackMutex     sync.RWMutex
-			mockMcpServer  *httptest.Server
+			slackServer   *httptest.Server
+			slackRequests []SlackMessage
+			slackMutex    sync.RWMutex
+			mockMcpServer *httptest.Server
 		)
 
 		BeforeEach(func() {
