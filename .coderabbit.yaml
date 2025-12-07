@@ -30,22 +30,22 @@ reviews:
   # Focus on important issues
   tone_instructions: "Focus on critical bugs, security issues, and architectural concerns. Skip style nitpicks and minor improvements unless they significantly impact code quality or maintainability."
 
+  # Path-specific instructions
+  path_instructions:
+    - path: "**/*_test.go"
+      instructions: "Focus on test correctness and coverage gaps only. Skip style suggestions."
+
+    - path: "test/e2e/**"
+      instructions: "Only flag critical test bugs or missing coverage. Skip minor improvements."
+
+    - path: "prds/**"
+      instructions: "Only review for clarity and completeness. Skip markdown style suggestions."
+
+    - path: "config/**"
+      instructions: "Focus on correctness of Kubernetes manifests and Kustomize configurations."
+
 language: "en-US"
 early_access: false
-
-# Path-specific instructions
-path_instructions:
-  - path: "**/*_test.go"
-    instructions: "Focus on test correctness and coverage gaps only. Skip style suggestions."
-
-  - path: "test/e2e/**"
-    instructions: "Only flag critical test bugs or missing coverage. Skip minor improvements."
-
-  - path: "prds/**"
-    instructions: "Only review for clarity and completeness. Skip markdown style suggestions."
-
-  - path: "config/**"
-    instructions: "Focus on correctness of Kubernetes manifests and Kustomize configurations."
 
 chat:
   auto_reply: false

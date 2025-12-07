@@ -139,7 +139,7 @@ spec:
                   The Secret must exist in the same namespace as the RemediationPolicy
                 properties:
                   key:
-                    description: Key within the secret containing the webhook URL
+                    description: Key within the secret containing the value
                     type: string
                   name:
                     description: Name of the secret in the same namespace as the RemediationPolicy
@@ -193,8 +193,7 @@ spec:
                           References a Secret in the same namespace as the RemediationPolicy
                         properties:
                           key:
-                            description: Key within the secret containing the webhook
-                              URL
+                            description: Key within the secret containing the value
                             type: string
                           name:
                             description: Name of the secret in the same namespace
@@ -235,8 +234,7 @@ spec:
                           References a Secret in the same namespace as the RemediationPolicy
                         properties:
                           key:
-                            description: Key within the secret containing the webhook
-                              URL
+                            description: Key within the secret containing the value
                             type: string
                           name:
                             description: Name of the secret in the same namespace

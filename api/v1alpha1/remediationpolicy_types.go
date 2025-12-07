@@ -13,7 +13,7 @@ type SecretReference struct {
 	// +required
 	Name string `json:"name"`
 
-	// Key within the secret containing the webhook URL
+	// Key within the secret containing the value
 	// +required
 	Key string `json:"key"`
 }
