@@ -239,6 +239,7 @@ func (r *RemediationPolicyReconciler) sendMcpRequest(ctx context.Context, mcpReq
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("User-Agent", "dot-ai-controller/v1.0.0")
 
 	// Add Authorization header if auth token is configured
@@ -247,7 +248,7 @@ func (r *RemediationPolicyReconciler) sendMcpRequest(ctx context.Context, mcpReq
 		logger.V(1).Info("Authorization header set for MCP request")
 	}
 
-	logger.Info("🌐 Sending HTTP request", "method", "POST", "headers", req.Header)
+	logger.Info("🌐 Sending HTTP request", "method", "POST", "endpoint", endpoint)
 
 	// Make the HTTP request
 	resp, err := r.HttpClient.Do(req)

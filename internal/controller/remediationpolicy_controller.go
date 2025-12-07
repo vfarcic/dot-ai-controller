@@ -36,9 +36,9 @@ type RemediationPolicyReconciler struct {
 	processedEventsMu sync.RWMutex
 
 	// Rate limiting - tracks policy processing per minute and cooldown periods
-	// Key format: policy-namespace/policy-name/involved-object-namespace/involved-object-name/event-reason
-	rateLimitTracking map[string][]time.Time // Track processing times per policy+object+reason
-	cooldownTracking  map[string]time.Time   // Track cooldown periods per policy+object+reason
+	// Key format: policy-namespace/policy-name/involved-object-namespace/involved-object-name
+	rateLimitTracking map[string][]time.Time // Track processing times per policy+object
+	cooldownTracking  map[string]time.Time   // Track cooldown periods per policy+object
 	rateLimitMu       sync.RWMutex
 }
 

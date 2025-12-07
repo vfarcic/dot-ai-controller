@@ -152,6 +152,9 @@ func (r *RemediationPolicyReconciler) resolveOwnerForRateLimiting(ctx context.Co
 }
 
 // getRateLimitKey creates a unique key for rate limiting tracking.
+// The key does NOT include event.Reason, so all events for the same object share
+// one rate limit bucket regardless of the specific event reason (e.g., Failed,
+// ErrImagePull, ImagePullBackOff all share the same cooldown).
 // For Pods owned by Jobs/CronJobs, the key uses the owner name instead of the pod name
 // to ensure all pods from the same Job/CronJob share the same rate limit bucket.
 func (r *RemediationPolicyReconciler) getRateLimitKey(ctx context.Context, policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event) string {
@@ -166,10 +169,9 @@ func (r *RemediationPolicyReconciler) getRateLimitKey(ctx context.Context, polic
 		objectIdentifier = ownerName
 	}
 
-	return fmt.Sprintf("%s/%s/%s/%s/%s",
+	return fmt.Sprintf("%s/%s/%s/%s",
 		policy.Namespace, policy.Name,
-		event.InvolvedObject.Namespace, objectIdentifier,
-		event.Reason)
+		event.InvolvedObject.Namespace, objectIdentifier)
 }
 
 // isRateLimited checks if processing should be rate limited based on policy configuration

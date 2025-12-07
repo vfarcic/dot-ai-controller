@@ -524,7 +524,7 @@ var _ = Describe("RemediationPolicy Rate Limiting", func() {
 
 					key := reconciler.getRateLimitKey(ctx, policy, event)
 
-					expectedKey := fmt.Sprintf("%s/rate-limit-policy/%s/standalone-pod/BackOff", testNs, testNs)
+					expectedKey := fmt.Sprintf("%s/rate-limit-policy/%s/standalone-pod", testNs, testNs)
 					Expect(key).To(Equal(expectedKey))
 				})
 			})
@@ -622,7 +622,7 @@ var _ = Describe("RemediationPolicy Rate Limiting", func() {
 
 					key := reconciler.getRateLimitKey(ctx, policy, event)
 
-					expectedKey := fmt.Sprintf("%s/rate-limit-policy/%s/cronjob:test-cronjob/BackOff", testNs, testNs)
+					expectedKey := fmt.Sprintf("%s/rate-limit-policy/%s/cronjob:test-cronjob", testNs, testNs)
 					Expect(key).To(Equal(expectedKey))
 				})
 			})
@@ -749,7 +749,7 @@ var _ = Describe("RemediationPolicy Rate Limiting", func() {
 					// Both keys should be identical - this is the core requirement!
 					Expect(key1).To(Equal(key2))
 
-					expectedKey := fmt.Sprintf("%s/rate-limit-policy/%s/cronjob:shared-cronjob/BackOff", testNs, testNs)
+					expectedKey := fmt.Sprintf("%s/rate-limit-policy/%s/cronjob:shared-cronjob", testNs, testNs)
 					Expect(key1).To(Equal(expectedKey))
 				})
 			})
@@ -771,7 +771,7 @@ var _ = Describe("RemediationPolicy Rate Limiting", func() {
 
 					key := reconciler.getRateLimitKey(ctx, policy, event)
 
-					expectedKey := fmt.Sprintf("%s/rate-limit-policy/%s/my-deployment/ScalingReplicaSet", testNs, testNs)
+					expectedKey := fmt.Sprintf("%s/rate-limit-policy/%s/my-deployment", testNs, testNs)
 					Expect(key).To(Equal(expectedKey))
 				})
 			})
