@@ -157,6 +157,12 @@ type RemediationPolicySpec struct {
 	// +required
 	McpEndpoint string `json:"mcpEndpoint"`
 
+	// McpAuthSecretRef references a Kubernetes Secret containing the MCP authentication token
+	// When configured, the controller will include "Authorization: Bearer <token>" header in MCP requests
+	// The Secret must exist in the same namespace as the RemediationPolicy
+	// +optional
+	McpAuthSecretRef *SecretReference `json:"mcpAuthSecretRef,omitempty"`
+
 	// MCP tool name (always "remediate")
 	// +kubebuilder:default="remediate"
 	// +optional

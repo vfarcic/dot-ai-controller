@@ -25,8 +25,13 @@ The RemediationPolicy CRD monitors Kubernetes events and forwards them to the De
 Create a RemediationPolicy to start processing events:
 
 ```bash
-# First, create a Secret containing your Slack webhook URL (recommended)
-# See config/samples/remediation/remediation_webhook_secrets.yaml for more examples
+# Create a Secret containing your MCP auth token (required for Kubernetes deployments)
+# Use the same token configured in the MCP server's DOT_AI_AUTH_TOKEN environment variable
+kubectl create secret generic dot-ai-secrets \
+  --from-literal=auth-token="your-mcp-auth-token" \
+  --namespace dot-ai
+
+# Create a Secret containing your Slack webhook URL (optional, for notifications)
 kubectl create secret generic slack-webhook \
   --from-literal=url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
   --namespace dot-ai
@@ -57,6 +62,9 @@ spec:
 
   # MCP endpoint using internal service URL
   mcpEndpoint: http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/tools/remediate
+  mcpAuthSecretRef:                   # MCP authentication (required for Kubernetes deployments)
+    name: dot-ai-secrets              # Secret name (must be in same namespace)
+    key: auth-token                   # Key within the Secret containing the auth token
   mcpTool: remediate
 
   # Manual mode as global default (conservative approach)

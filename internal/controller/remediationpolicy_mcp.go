@@ -13,6 +13,8 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	dotaiv1alpha1 "github.com/vfarcic/dot-ai-controller/api/v1alpha1"
@@ -170,8 +172,52 @@ func (r *RemediationPolicyReconciler) generateAndLogMcpRequest(ctx context.Conte
 	return mcpRequest, nil
 }
 
+// getMcpAuthToken resolves the MCP authentication token from a Secret reference
+// Returns empty string if no auth is configured (auth is optional)
+func (r *RemediationPolicyReconciler) getMcpAuthToken(ctx context.Context, policy *dotaiv1alpha1.RemediationPolicy) (string, error) {
+	if policy.Spec.McpAuthSecretRef == nil {
+		return "", nil // No auth configured - this is valid
+	}
+
+	logger := logf.FromContext(ctx)
+	secretRef := policy.Spec.McpAuthSecretRef
+
+	// Fetch the Secret
+	secret := &corev1.Secret{}
+	secretKey := client.ObjectKey{
+		Namespace: policy.Namespace,
+		Name:      secretRef.Name,
+	}
+
+	if err := r.Get(ctx, secretKey, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", fmt.Errorf("MCP auth Secret '%s' not found in namespace '%s'",
+				secretRef.Name, policy.Namespace)
+		}
+		return "", fmt.Errorf("failed to fetch MCP auth Secret: %w", err)
+	}
+
+	// Extract the key from Secret data
+	tokenBytes, exists := secret.Data[secretRef.Key]
+	if !exists {
+		return "", fmt.Errorf("MCP auth Secret '%s' does not contain key '%s'",
+			secretRef.Name, secretRef.Key)
+	}
+
+	if len(tokenBytes) == 0 {
+		return "", fmt.Errorf("MCP auth Secret '%s' key '%s' is empty",
+			secretRef.Name, secretRef.Key)
+	}
+
+	logger.V(1).Info("Resolved MCP auth token from Secret",
+		"secretName", secretRef.Name,
+		"secretKey", secretRef.Key)
+
+	return string(tokenBytes), nil
+}
+
 // sendMcpRequest sends MCP request to the specified endpoint (single attempt, no retries)
-func (r *RemediationPolicyReconciler) sendMcpRequest(ctx context.Context, mcpRequest *dotaiv1alpha1.McpRequest, endpoint string) (*McpResponse, error) {
+func (r *RemediationPolicyReconciler) sendMcpRequest(ctx context.Context, mcpRequest *dotaiv1alpha1.McpRequest, endpoint string, authToken string) (*McpResponse, error) {
 	logger := logf.FromContext(ctx)
 
 	startTime := time.Now()
@@ -194,6 +240,12 @@ func (r *RemediationPolicyReconciler) sendMcpRequest(ctx context.Context, mcpReq
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "dot-ai-controller/v1.0.0")
+
+	// Add Authorization header if auth token is configured
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+		logger.V(1).Info("Authorization header set for MCP request")
+	}
 
 	logger.Info("🌐 Sending HTTP request", "method", "POST", "headers", req.Header)
 

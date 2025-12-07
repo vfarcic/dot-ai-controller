@@ -170,6 +170,11 @@ func (in *RemediationPolicySpec) DeepCopyInto(out *RemediationPolicySpec) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.McpAuthSecretRef != nil {
+		in, out := &in.McpAuthSecretRef, &out.McpAuthSecretRef
+		*out = new(SecretReference)
+		**out = **in
+	}
 	if in.ConfidenceThreshold != nil {
 		in, out := &in.ConfidenceThreshold, &out.ConfidenceThreshold
 		*out = new(float64)
