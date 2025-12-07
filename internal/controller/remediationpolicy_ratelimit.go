@@ -257,3 +257,70 @@ func (r *RemediationPolicyReconciler) updateRateLimitStatus(ctx context.Context,
 
 	return nil
 }
+
+// getObjectCooldownKey creates a unique key for object-level cooldown tracking.
+// Uses the same key format as rate limiting to ensure consistency.
+func (r *RemediationPolicyReconciler) getObjectCooldownKey(ctx context.Context, policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event) string {
+	return r.getRateLimitKey(ctx, policy, event)
+}
+
+// isObjectInCooldown checks if an object is currently in cooldown period.
+// This provides object-level deduplication independent of rate limiting configuration.
+// Returns true if the object is in cooldown and should not be processed.
+func (r *RemediationPolicyReconciler) isObjectInCooldown(ctx context.Context, policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event) (bool, string) {
+	key := r.getObjectCooldownKey(ctx, policy, event)
+	now := time.Now()
+
+	r.objectCooldownsMu.RLock()
+	defer r.objectCooldownsMu.RUnlock()
+
+	if r.objectCooldowns == nil {
+		return false, ""
+	}
+
+	if cooldownEnd, exists := r.objectCooldowns[key]; exists && now.Before(cooldownEnd) {
+		remaining := cooldownEnd.Sub(now)
+		return true, fmt.Sprintf("object cooldown active for %v more", remaining.Round(time.Second))
+	}
+
+	return false, ""
+}
+
+// setObjectCooldown marks an object as in cooldown after remediation is triggered.
+// The cooldown duration is DefaultObjectCooldownMinutes.
+func (r *RemediationPolicyReconciler) setObjectCooldown(ctx context.Context, policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event) {
+	key := r.getObjectCooldownKey(ctx, policy, event)
+	cooldownEnd := time.Now().Add(time.Duration(DefaultObjectCooldownMinutes) * time.Minute)
+
+	r.objectCooldownsMu.Lock()
+	defer r.objectCooldownsMu.Unlock()
+
+	if r.objectCooldowns == nil {
+		r.objectCooldowns = make(map[string]time.Time)
+	}
+
+	r.objectCooldowns[key] = cooldownEnd
+
+	logger := logf.FromContext(ctx)
+	logger.V(1).Info("Object cooldown set",
+		"key", key,
+		"cooldownEnd", cooldownEnd,
+		"durationMinutes", DefaultObjectCooldownMinutes)
+}
+
+// cleanupObjectCooldowns removes expired cooldowns to prevent memory leaks.
+func (r *RemediationPolicyReconciler) cleanupObjectCooldowns() {
+	r.objectCooldownsMu.Lock()
+	defer r.objectCooldownsMu.Unlock()
+
+	if r.objectCooldowns == nil {
+		return
+	}
+
+	now := time.Now()
+	for key, cooldownEnd := range r.objectCooldowns {
+		if now.After(cooldownEnd) {
+			delete(r.objectCooldowns, key)
+		}
+	}
+}

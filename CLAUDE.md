@@ -166,6 +166,10 @@ Test files follow Go convention: `*_test.go` alongside source files.
 - Fix all test failures before updating PRDs, documentation, or moving to next tasks
 - Test failures are as important as functionality - they ensure maintainability and regression prevention
 
+### Test Output
+
+Save test output to `./tmp/test-output.txt` for review.
+
 ## Dependencies
 
 - **Go**: 1.24.0+

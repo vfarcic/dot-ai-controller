@@ -23,6 +23,12 @@ import (
 	dotaiv1alpha1 "github.com/vfarcic/dot-ai-controller/api/v1alpha1"
 )
 
+// DefaultObjectCooldownMinutes is the default cooldown period for object-level deduplication.
+// Once remediation is triggered for an object, subsequent events for that object are
+// blocked for this duration. This prevents notification storms from multiple events
+// (e.g., Failed, ErrImagePull, ImagePullBackOff) for the same underlying issue.
+const DefaultObjectCooldownMinutes = 5
+
 // RemediationPolicyReconciler reconciles a RemediationPolicy object
 type RemediationPolicyReconciler struct {
 	client.Client
@@ -40,6 +46,14 @@ type RemediationPolicyReconciler struct {
 	rateLimitTracking map[string][]time.Time // Track processing times per policy+object
 	cooldownTracking  map[string]time.Time   // Track cooldown periods per policy+object
 	rateLimitMu       sync.RWMutex
+
+	// Object-level cooldowns - prevents duplicate remediations for the same object
+	// independent of rate limiting configuration. This ensures that when multiple
+	// events occur for the same object (e.g., Failed, ErrImagePull, ImagePullBackOff),
+	// only the first triggers remediation.
+	// Key format: policy-namespace/policy-name/involved-object-namespace/involved-object-name
+	objectCooldowns   map[string]time.Time
+	objectCooldownsMu sync.RWMutex
 }
 
 // +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=remediationpolicies,verbs=get;list;watch
@@ -525,6 +539,9 @@ func (r *RemediationPolicyReconciler) reconcilePolicy(ctx context.Context, polic
 	// Periodic cleanup of processed events cache
 	r.cleanupProcessedEvents(10 * time.Minute)
 
+	// Periodic cleanup of expired object cooldowns
+	r.cleanupObjectCooldowns()
+
 	// Requeue periodically to perform maintenance
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
@@ -567,6 +584,26 @@ func (r *RemediationPolicyReconciler) reconcileEvent(ctx context.Context, event 
 		if matches, matchingSelector := r.matchesPolicyWithSelector(event, &policy); matches {
 			effectiveMode := r.getEffectiveMode(matchingSelector, &policy)
 
+			// Check object-level cooldown first (independent of rate limiting)
+			// This prevents notification storms from multiple events for the same object
+			if inCooldown, reason := r.isObjectInCooldown(ctx, &policy, event); inCooldown {
+				logger.Info("Event blocked by object cooldown",
+					"policy", fmt.Sprintf("%s/%s", policy.Namespace, policy.Name),
+					"reason", reason,
+					"involvedObject", fmt.Sprintf("%s/%s", event.InvolvedObject.Kind, event.InvolvedObject.Name),
+				)
+
+				// Update rate limit status to track blocked events
+				// (object cooldown is a form of rate limiting)
+				if err := r.updateRateLimitStatus(ctx, &policy); err != nil {
+					logger.Error(err, "failed to update rate limit status for object cooldown")
+				}
+
+				// Mark as matched but skip processing
+				matched = true
+				break
+			}
+
 			// Check rate limiting before processing
 			if rateLimited, reason := r.isRateLimited(ctx, &policy, event); rateLimited {
 				logger.Info("Event processing rate limited",
@@ -595,6 +632,9 @@ func (r *RemediationPolicyReconciler) reconcileEvent(ctx context.Context, event 
 			// Mark event as processed before processing to avoid duplicates
 			r.markEventProcessed(eventKey)
 			matched = true
+
+			// Set object cooldown before processing to block subsequent events immediately
+			r.setObjectCooldown(ctx, &policy, event)
 
 			// Process the event
 			if err := r.processEvent(ctx, event, &policy, matchingSelector); err != nil {
