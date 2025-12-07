@@ -13,7 +13,7 @@ type SecretReference struct {
 	// +required
 	Name string `json:"name"`
 
-	// Key within the secret containing the webhook URL
+	// Key within the secret containing the value
 	// +required
 	Key string `json:"key"`
 }
@@ -156,6 +156,12 @@ type RemediationPolicySpec struct {
 	// MCP endpoint URL
 	// +required
 	McpEndpoint string `json:"mcpEndpoint"`
+
+	// McpAuthSecretRef references a Kubernetes Secret containing the MCP authentication token
+	// When configured, the controller will include "Authorization: Bearer <token>" header in MCP requests
+	// The Secret must exist in the same namespace as the RemediationPolicy
+	// +optional
+	McpAuthSecretRef *SecretReference `json:"mcpAuthSecretRef,omitempty"`
 
 	// MCP tool name (always "remediate")
 	// +kubebuilder:default="remediate"

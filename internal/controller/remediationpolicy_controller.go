@@ -239,8 +239,17 @@ func (r *RemediationPolicyReconciler) processEvent(ctx context.Context, event *c
 		// Don't fail the entire process for notification errors, just log and continue
 	}
 
+	// Resolve MCP auth token from Secret (if configured)
+	authToken, err := r.getMcpAuthToken(ctx, policy)
+	if err != nil {
+		logger.Error(err, "failed to resolve MCP auth token from Secret")
+		r.Recorder.Eventf(policy, corev1.EventTypeWarning, "McpAuthSecretError",
+			"Failed to resolve MCP auth token: %v", err)
+		return err
+	}
+
 	// MILESTONE 4B: Send HTTP request to MCP endpoint
-	mcpResponse, err := r.sendMcpRequest(ctx, mcpRequest, policy.Spec.McpEndpoint)
+	mcpResponse, err := r.sendMcpRequest(ctx, mcpRequest, policy.Spec.McpEndpoint, authToken)
 	if err != nil {
 		logger.Error(err, "failed to send MCP request")
 		// Generate error event
