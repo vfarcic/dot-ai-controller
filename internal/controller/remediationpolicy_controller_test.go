@@ -244,6 +244,405 @@ var _ = Describe("RemediationPolicy Controller", func() {
 		})
 	})
 
+	Describe("Startup Time Filtering", func() {
+		Context("When events occurred before controller startup", func() {
+			It("should ignore events with lastTimestamp before startupTime", func() {
+				// Set startup time to now
+				reconciler.startupTime = time.Now()
+
+				// Create event with lastTimestamp 1 hour ago
+				event := &corev1.Event{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("startup-before-event-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Type:          "Warning",
+					Reason:        "CrashLoopBackOff",
+					LastTimestamp: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+					InvolvedObject: corev1.ObjectReference{
+						Kind:      "Pod",
+						Name:      "test-pod",
+						Namespace: "default",
+					},
+					Message: "Back-off restarting failed container",
+				}
+
+				// Create a policy that would match this event
+				policy := &dotaiv1alpha1.RemediationPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("startup-test-policy-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Spec: dotaiv1alpha1.RemediationPolicySpec{
+						EventSelectors: []dotaiv1alpha1.EventSelector{
+							{
+								Type:               "Warning",
+								Reason:             "CrashLoopBackOff",
+								InvolvedObjectKind: "Pod",
+							},
+						},
+						McpEndpoint: "http://test-mcp:3456/api/v1/tools/remediate",
+					},
+				}
+
+				err := k8sClient.Create(ctx, policy)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Initialize policy
+				policyKey := types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: policyKey})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create the event in the cluster
+				err = k8sClient.Create(ctx, event)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Try to reconcile the event
+				eventKey := types.NamespacedName{Name: event.Name, Namespace: event.Namespace}
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: eventKey})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify the event was NOT processed (status should not be updated)
+				updatedPolicy := &dotaiv1alpha1.RemediationPolicy{}
+				err = k8sClient.Get(ctx, policyKey, updatedPolicy)
+				Expect(err).NotTo(HaveOccurred())
+
+				// TotalEventsProcessed should be 0 because event was filtered
+				Expect(updatedPolicy.Status.TotalEventsProcessed).To(Equal(int64(0)))
+
+				// Clean up
+				err = k8sClient.Delete(ctx, event)
+				Expect(err).NotTo(HaveOccurred())
+				err = k8sClient.Delete(ctx, policy)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should ignore events with eventTime before startupTime (series-based events)", func() {
+				// Set startup time to now
+				reconciler.startupTime = time.Now()
+
+				// Create event with eventTime 1 hour ago (for series-based events)
+				// Series-based events require additional fields: action, reportingController, reportingInstance
+				event := &corev1.Event{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("startup-series-event-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Type:                "Warning",
+					Reason:              "CrashLoopBackOff",
+					EventTime:           metav1.NewMicroTime(time.Now().Add(-1 * time.Hour)),
+					Action:              "Pulling",
+					ReportingController: "kubelet",
+					ReportingInstance:   "test-node",
+					InvolvedObject: corev1.ObjectReference{
+						Kind:      "Pod",
+						Name:      "test-pod",
+						Namespace: "default",
+					},
+					Message: "Back-off restarting failed container",
+				}
+
+				// Create a policy that would match this event
+				policy := &dotaiv1alpha1.RemediationPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("startup-series-policy-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Spec: dotaiv1alpha1.RemediationPolicySpec{
+						EventSelectors: []dotaiv1alpha1.EventSelector{
+							{
+								Type:               "Warning",
+								Reason:             "CrashLoopBackOff",
+								InvolvedObjectKind: "Pod",
+							},
+						},
+						McpEndpoint: "http://test-mcp:3456/api/v1/tools/remediate",
+					},
+				}
+
+				err := k8sClient.Create(ctx, policy)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Initialize policy
+				policyKey := types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: policyKey})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create the event in the cluster
+				err = k8sClient.Create(ctx, event)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Try to reconcile the event
+				eventKey := types.NamespacedName{Name: event.Name, Namespace: event.Namespace}
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: eventKey})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify the event was NOT processed
+				updatedPolicy := &dotaiv1alpha1.RemediationPolicy{}
+				err = k8sClient.Get(ctx, policyKey, updatedPolicy)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(updatedPolicy.Status.TotalEventsProcessed).To(Equal(int64(0)))
+
+				// Clean up
+				err = k8sClient.Delete(ctx, event)
+				Expect(err).NotTo(HaveOccurred())
+				err = k8sClient.Delete(ctx, policy)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+
+		Context("When events occurred after controller startup", func() {
+			It("should process events with lastTimestamp after startupTime", func() {
+				// Set startup time to 1 hour ago
+				reconciler.startupTime = time.Now().Add(-1 * time.Hour)
+
+				// Create a mock MCP server for this test
+				mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(createSuccessfulMcpResponse("Remediation successful", 1000))
+				}))
+				defer mockServer.Close()
+
+				// Use a unique reason to avoid matching other policies
+				uniqueReason := fmt.Sprintf("StartupAfterTest-%d", time.Now().UnixNano())
+
+				// Create event with lastTimestamp now (after startup)
+				event := &corev1.Event{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("startup-after-event-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Type:          "Warning",
+					Reason:        uniqueReason,
+					LastTimestamp: metav1.NewTime(time.Now()),
+					InvolvedObject: corev1.ObjectReference{
+						Kind:      "Pod",
+						Name:      "test-pod",
+						Namespace: "default",
+					},
+					Message: "Back-off restarting failed container",
+				}
+
+				// Create a policy that would match this event (with unique reason)
+				policy := &dotaiv1alpha1.RemediationPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("startup-after-policy-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Spec: dotaiv1alpha1.RemediationPolicySpec{
+						EventSelectors: []dotaiv1alpha1.EventSelector{
+							{
+								Type:               "Warning",
+								Reason:             uniqueReason,
+								InvolvedObjectKind: "Pod",
+							},
+						},
+						McpEndpoint: mockServer.URL + "/api/v1/tools/remediate",
+					},
+				}
+
+				err := k8sClient.Create(ctx, policy)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Initialize policy
+				policyKey := types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: policyKey})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create the event in the cluster
+				err = k8sClient.Create(ctx, event)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Reconcile the event
+				eventKey := types.NamespacedName{Name: event.Name, Namespace: event.Namespace}
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: eventKey})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify the event WAS processed
+				updatedPolicy := &dotaiv1alpha1.RemediationPolicy{}
+				Eventually(func() int64 {
+					err := k8sClient.Get(ctx, policyKey, updatedPolicy)
+					Expect(err).NotTo(HaveOccurred())
+					return updatedPolicy.Status.TotalEventsProcessed
+				}, "5s").Should(Equal(int64(1)))
+
+				// Clean up
+				err = k8sClient.Delete(ctx, event)
+				Expect(err).NotTo(HaveOccurred())
+				err = k8sClient.Delete(ctx, policy)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+
+		Context("When startupTime is not set (zero value)", func() {
+			It("should process all events when startupTime is zero", func() {
+				// Ensure startupTime is zero (not set)
+				reconciler.startupTime = time.Time{}
+
+				// Create a mock MCP server for this test
+				mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(createSuccessfulMcpResponse("Remediation successful", 1000))
+				}))
+				defer mockServer.Close()
+
+				// Use a unique reason to avoid matching other policies
+				uniqueReason := fmt.Sprintf("StartupZeroTest-%d", time.Now().UnixNano())
+
+				// Create event with lastTimestamp 24 hours ago
+				event := &corev1.Event{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("startup-zero-event-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Type:          "Warning",
+					Reason:        uniqueReason,
+					LastTimestamp: metav1.NewTime(time.Now().Add(-24 * time.Hour)),
+					InvolvedObject: corev1.ObjectReference{
+						Kind:      "Pod",
+						Name:      "test-pod",
+						Namespace: "default",
+					},
+					Message: "Back-off restarting failed container",
+				}
+
+				// Create a policy that would match this event (with unique reason)
+				policy := &dotaiv1alpha1.RemediationPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("startup-zero-policy-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Spec: dotaiv1alpha1.RemediationPolicySpec{
+						EventSelectors: []dotaiv1alpha1.EventSelector{
+							{
+								Type:               "Warning",
+								Reason:             uniqueReason,
+								InvolvedObjectKind: "Pod",
+							},
+						},
+						McpEndpoint: mockServer.URL + "/api/v1/tools/remediate",
+					},
+				}
+
+				err := k8sClient.Create(ctx, policy)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Initialize policy
+				policyKey := types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: policyKey})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create the event in the cluster
+				err = k8sClient.Create(ctx, event)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Reconcile the event
+				eventKey := types.NamespacedName{Name: event.Name, Namespace: event.Namespace}
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: eventKey})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify the event WAS processed (startupTime zero means no filtering)
+				updatedPolicy := &dotaiv1alpha1.RemediationPolicy{}
+				Eventually(func() int64 {
+					err := k8sClient.Get(ctx, policyKey, updatedPolicy)
+					Expect(err).NotTo(HaveOccurred())
+					return updatedPolicy.Status.TotalEventsProcessed
+				}, "5s").Should(Equal(int64(1)))
+
+				// Clean up
+				err = k8sClient.Delete(ctx, event)
+				Expect(err).NotTo(HaveOccurred())
+				err = k8sClient.Delete(ctx, policy)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+
+		Context("When event has no timestamp", func() {
+			It("should process events without any timestamp", func() {
+				// Set startup time
+				reconciler.startupTime = time.Now()
+
+				// Create a mock MCP server for this test
+				mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(createSuccessfulMcpResponse("Remediation successful", 1000))
+				}))
+				defer mockServer.Close()
+
+				// Use a unique reason to avoid matching other policies
+				uniqueReason := fmt.Sprintf("StartupNoTsTest-%d", time.Now().UnixNano())
+
+				// Create event without any timestamp
+				event := &corev1.Event{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("startup-no-ts-event-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Type:   "Warning",
+					Reason: uniqueReason,
+					InvolvedObject: corev1.ObjectReference{
+						Kind:      "Pod",
+						Name:      "test-pod",
+						Namespace: "default",
+					},
+					Message: "Back-off restarting failed container",
+				}
+
+				// Create a policy that would match this event (with unique reason)
+				policy := &dotaiv1alpha1.RemediationPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("startup-no-ts-policy-%d", time.Now().UnixNano()),
+						Namespace: "default",
+					},
+					Spec: dotaiv1alpha1.RemediationPolicySpec{
+						EventSelectors: []dotaiv1alpha1.EventSelector{
+							{
+								Type:               "Warning",
+								Reason:             uniqueReason,
+								InvolvedObjectKind: "Pod",
+							},
+						},
+						McpEndpoint: mockServer.URL + "/api/v1/tools/remediate",
+					},
+				}
+
+				err := k8sClient.Create(ctx, policy)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Initialize policy
+				policyKey := types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: policyKey})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create the event in the cluster
+				err = k8sClient.Create(ctx, event)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Reconcile the event
+				eventKey := types.NamespacedName{Name: event.Name, Namespace: event.Namespace}
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: eventKey})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify the event WAS processed (no timestamp = process anyway)
+				updatedPolicy := &dotaiv1alpha1.RemediationPolicy{}
+				Eventually(func() int64 {
+					err := k8sClient.Get(ctx, policyKey, updatedPolicy)
+					Expect(err).NotTo(HaveOccurred())
+					return updatedPolicy.Status.TotalEventsProcessed
+				}, "5s").Should(Equal(int64(1)))
+
+				// Clean up
+				err = k8sClient.Delete(ctx, event)
+				Expect(err).NotTo(HaveOccurred())
+				err = k8sClient.Delete(ctx, policy)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+	})
+
 	Describe("Event Deduplication", func() {
 		var event *corev1.Event
 

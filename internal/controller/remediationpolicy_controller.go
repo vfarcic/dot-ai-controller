@@ -13,7 +13,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,6 +37,11 @@ type RemediationPolicyReconciler struct {
 	Scheme     *runtime.Scheme
 	Recorder   record.EventRecorder
 	HttpClient *http.Client
+
+	// startupTime records when the controller started.
+	// Events with lastTimestamp before this time are ignored to prevent
+	// notification storms on controller restart.
+	startupTime time.Time
 
 	// processedEvents stores processed event keys to prevent duplicate processing
 	// Key format: namespace/name/resourceVersion
@@ -68,6 +75,55 @@ type RemediationPolicyReconciler struct {
 // getEventKey creates a unique key for event deduplication
 func (r *RemediationPolicyReconciler) getEventKey(event *corev1.Event) string {
 	return fmt.Sprintf("%s/%s/%s", event.Namespace, event.Name, event.ResourceVersion)
+}
+
+// involvedObjectExists checks if the object referenced by the event still exists in the cluster.
+// This prevents processing events for resources that have been deleted.
+// Returns true if the object exists or if we cannot determine (e.g., API errors).
+// Returns false only when we can confirm the object has been deleted (NotFound error).
+func (r *RemediationPolicyReconciler) involvedObjectExists(ctx context.Context, event *corev1.Event) bool {
+	logger := logf.FromContext(ctx)
+	involvedObj := event.InvolvedObject
+
+	// Parse the APIVersion to get group and version
+	gv, err := schema.ParseGroupVersion(involvedObj.APIVersion)
+	if err != nil {
+		logger.V(1).Info("Failed to parse APIVersion, assuming object exists",
+			"apiVersion", involvedObj.APIVersion,
+			"error", err)
+		return true
+	}
+
+	// Create an unstructured object to query
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   gv.Group,
+		Version: gv.Version,
+		Kind:    involvedObj.Kind,
+	})
+
+	objKey := client.ObjectKey{
+		Namespace: involvedObj.Namespace,
+		Name:      involvedObj.Name,
+	}
+
+	if err := r.Get(ctx, objKey, obj); err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("Involved object no longer exists, skipping event",
+				"kind", involvedObj.Kind,
+				"name", involvedObj.Name,
+				"namespace", involvedObj.Namespace)
+			return false
+		}
+		// For other errors (transient API issues), assume object exists to avoid missing events
+		logger.V(1).Info("Error checking if involved object exists, assuming it does",
+			"kind", involvedObj.Kind,
+			"name", involvedObj.Name,
+			"error", err)
+		return true
+	}
+
+	return true
 }
 
 // isEventProcessed checks if an event has already been processed
@@ -554,6 +610,29 @@ func (r *RemediationPolicyReconciler) reconcileEvent(ctx context.Context, event 
 		"eventReason", event.Reason,
 	)
 
+	// Filter out events that occurred before controller startup to prevent
+	// notification storms on restart. We check lastTimestamp which reflects
+	// the most recent occurrence of recurring events.
+	if !r.startupTime.IsZero() {
+		eventTime := event.LastTimestamp.Time
+		// For events without lastTimestamp, fall back to eventTime (series-based events)
+		if eventTime.IsZero() && !event.EventTime.IsZero() {
+			eventTime = event.EventTime.Time
+		}
+		if !eventTime.IsZero() && eventTime.Before(r.startupTime) {
+			logger.V(1).Info("Ignoring historical event (occurred before controller startup)",
+				"eventTime", eventTime,
+				"startupTime", r.startupTime,
+			)
+			return ctrl.Result{}, nil
+		}
+	}
+
+	// Check if the involved object still exists - skip events for deleted resources
+	if !r.involvedObjectExists(ctx, event) {
+		return ctrl.Result{}, nil
+	}
+
 	// Check if we've already processed this event
 	eventKey := r.getEventKey(event)
 	if r.isEventProcessed(eventKey) {
@@ -659,6 +738,9 @@ func (r *RemediationPolicyReconciler) reconcileEvent(ctx context.Context, event 
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RemediationPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Record startup time to filter out historical events on restart
+	r.startupTime = time.Now()
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Event{}).
 		Watches(
