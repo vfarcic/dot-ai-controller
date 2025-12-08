@@ -1,5 +1,6 @@
 # Build the manager binary
-FROM golang:1.24 AS builder
+# Use BUILDPLATFORM to run Go natively (fast) while cross-compiling to TARGETARCH
+FROM --platform=$BUILDPLATFORM golang:1.24 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
