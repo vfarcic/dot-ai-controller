@@ -1,7 +1,3 @@
----
-sidebar_position: 4
----
-
 # Troubleshooting Guide
 
 This guide covers common issues encountered when running the DevOps AI Toolkit Controller and their solutions.

@@ -1,7 +1,3 @@
----
-sidebar_position: 0
----
-
 # DevOps AI Toolkit Controller
 
 A Kubernetes controller that provides resource tracking and event-driven remediation capabilities.

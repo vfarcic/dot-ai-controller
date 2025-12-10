@@ -1,7 +1,3 @@
----
-sidebar_position: 1
----
-
 # Setup Guide
 
 This guide covers installation and initial setup of the DevOps AI Toolkit Controller.
