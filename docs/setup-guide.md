@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # Setup Guide
 
 This guide covers installation and initial setup of the DevOps AI Toolkit Controller.
@@ -81,8 +85,8 @@ The controller expects the MCP service at: `http://dot-ai-mcp.dot-ai.svc.cluster
 
 Choose which features you want to use:
 
-- **Solution CRD**: [Solution Guide](solution-guide.md) - Resource tracking and lifecycle management (works immediately, no MCP needed)
-- **RemediationPolicy CRD**: [Remediation Guide](remediation-guide.md) - Event-driven remediation (requires MCP from previous step)
+- **RemediationPolicy CRD**: [Remediation Guide](remediation-guide.md) - Event-driven remediation (requires MCP)
+- **Solution CRD**: [Solution Guide](solution-guide.md) - Resource tracking and lifecycle management (works standalone, no MCP needed)
 
 ## Cleanup
 

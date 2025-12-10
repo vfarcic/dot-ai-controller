@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # Remediation Guide
 
 This guide covers the RemediationPolicy CRD for event-driven remediation using the DevOps AI Toolkit.

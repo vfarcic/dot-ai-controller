@@ -1,3 +1,7 @@
+---
+sidebar_position: 0
+---
+
 # DevOps AI Toolkit Controller
 
 A Kubernetes controller that provides resource tracking and event-driven remediation capabilities.
@@ -111,8 +115,8 @@ See the [Remediation Guide](docs/remediation-guide.md) for complete examples, co
 ## Documentation
 
 - **[Setup Guide](docs/setup-guide.md)** - Installation and prerequisites
-- **[Solution Guide](docs/solution-guide.md)** - Resource tracking and lifecycle management
 - **[Remediation Guide](docs/remediation-guide.md)** - Event-driven remediation
+- **[Solution Guide](docs/solution-guide.md)** - Resource tracking and lifecycle management
 - **[Troubleshooting Guide](docs/troubleshooting.md)** - Common issues and solutions
 
 ## Architecture
