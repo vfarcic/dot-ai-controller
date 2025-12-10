@@ -149,6 +149,7 @@ See the [Remediation Guide](docs/remediation-guide.md) for complete examples, co
 └─────────────────────────────────────────────────────┘
 ```
 
+<!-- docs-exclude-start -->
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
@@ -156,3 +157,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
+<!-- docs-exclude-end -->
