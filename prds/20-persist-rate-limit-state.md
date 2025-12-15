@@ -205,10 +205,11 @@ func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldown
 - [x] Mark entries dirty when cooldown is set
 - [x] Start periodic sync goroutine
 
-### Milestone 3: Graceful Shutdown Integration
-- [ ] Perform final sync on SIGTERM (integrate with PRD #19)
-- [ ] Ensure sync completes before shutdown
-- [ ] Log any entries that couldn't be persisted
+### Milestone 3: Minimal Shutdown Sync
+- [x] Perform final sync when context is cancelled (controller-runtime handles SIGTERM)
+- [x] Log sync completion or failures
+
+*Note: This is minimal shutdown handling for persistence only. Extensive graceful shutdown (draining in-flight MCP operations, shutdown-aware readiness probes, configurable timeouts) remains in PRD #19.*
 
 ### Milestone 4: RBAC and Helm Chart Updates
 - [x] Update ClusterRole with ConfigMap permissions
@@ -233,9 +234,10 @@ func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldown
 
 ## Dependencies
 
-- PRD #19 (Graceful Shutdown) - for final sync on shutdown
 - Kubernetes ConfigMap API
-- No external dependencies
+- controller-runtime's context cancellation on SIGTERM (built-in)
+
+*Note: PRD #19 (Graceful Shutdown) is complementary but not a blocker. This PRD handles minimal shutdown sync; PRD #19 handles draining in-flight MCP operations.*
 
 ## Out of Scope
 
@@ -275,7 +277,8 @@ Accept state loss on restart.
 | Date | Update |
 |------|--------|
 | 2025-12-03 | PRD created based on @barth12 feedback in issue #16 |
-| 2025-12-15 | Milestone 1 & 2 complete. Design changed to per-CR ConfigMaps (ownerReferences for auto-cleanup). Created `persistence.go`, integrated with controller, added flags. RBAC updated. Milestone 3 blocked by PRD #19. |
+| 2025-12-15 | Milestone 1 & 2 complete. Design changed to per-CR ConfigMaps (ownerReferences for auto-cleanup). Created `persistence.go`, integrated with controller, added flags. RBAC updated. |
+| 2025-12-15 | Milestone 3 complete. Added shutdown sync: `Stop()` method now uses stored `getCooldowns` callback, creates fresh context with 30s timeout, called from `main.go` after manager exits. |
 
 ---
 

@@ -55,6 +55,9 @@ type CooldownPersistence struct {
 	mu           sync.RWMutex
 	dirtyEntries map[string]bool // Full keys that need sync
 
+	// getCooldowns is stored during StartPeriodicSync for use during Stop
+	getCooldowns func() map[string]time.Time
+
 	stopCh chan struct{}
 	doneCh chan struct{}
 }
@@ -394,6 +397,9 @@ func (p *CooldownPersistence) syncPolicyConfigMap(ctx context.Context, policyNs,
 func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldowns func() map[string]time.Time) {
 	logger := logf.FromContext(ctx).WithName("cooldown-persistence")
 
+	// Store callback for use during Stop
+	p.getCooldowns = getCooldowns
+
 	if !p.enabled {
 		logger.Info("Cooldown persistence disabled, not starting periodic sync")
 		close(p.doneCh)
@@ -425,9 +431,11 @@ func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldown
 	}()
 }
 
-// Stop stops periodic sync and performs a final sync
-func (p *CooldownPersistence) Stop(ctx context.Context, cooldowns map[string]time.Time) {
-	logger := logf.FromContext(ctx).WithName("cooldown-persistence")
+// Stop stops periodic sync and performs a final sync.
+// Uses the getCooldowns callback stored during StartPeriodicSync.
+// Creates a fresh context with timeout since the manager context may be cancelled.
+func (p *CooldownPersistence) Stop() {
+	logger := logf.Log.WithName("cooldown-persistence")
 
 	if !p.enabled {
 		return
@@ -435,12 +443,26 @@ func (p *CooldownPersistence) Stop(ctx context.Context, cooldowns map[string]tim
 
 	logger.Info("Stopping cooldown persistence, performing final sync")
 
+	// Signal the periodic sync goroutine to stop
 	close(p.stopCh)
 
+	// Wait for goroutine to exit
 	select {
 	case <-p.doneCh:
 	case <-time.After(5 * time.Second):
 		logger.Info("Timeout waiting for periodic sync to stop")
+	}
+
+	// Get current cooldowns using stored callback
+	if p.getCooldowns == nil {
+		logger.Info("No getCooldowns callback stored, skipping final sync")
+		return
+	}
+	cooldowns := p.getCooldowns()
+
+	if len(cooldowns) == 0 {
+		logger.Info("No cooldowns to sync")
+		return
 	}
 
 	// Mark all for final sync
@@ -450,8 +472,15 @@ func (p *CooldownPersistence) Stop(ctx context.Context, cooldowns map[string]tim
 	}
 	p.mu.Unlock()
 
+	// Create fresh context with timeout for final sync
+	// (manager context is likely cancelled at this point)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	if err := p.Sync(ctx, cooldowns); err != nil {
 		logger.Error(err, "Final sync failed")
+	} else {
+		logger.Info("Final sync completed", "entries", len(cooldowns))
 	}
 }
 

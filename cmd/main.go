@@ -276,4 +276,7 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+
+	// Perform final cooldown state sync on shutdown
+	cooldownPersistence.Stop()
 }
