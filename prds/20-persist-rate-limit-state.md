@@ -1,7 +1,7 @@
 # PRD: Persist Rate Limit State Across Pod Restarts
 
 **Issue**: [#20](https://github.com/vfarcic/dot-ai-controller/issues/20)
-**Status**: Not Started
+**Status**: Complete
 **Priority**: High
 **Created**: 2025-12-03
 
@@ -81,35 +81,60 @@ Persist cooldown state to a ConfigMap with periodic batch sync, restoring state 
 
 ### ConfigMap Structure
 
+**Design Decision**: Per-CR ConfigMaps instead of a single global ConfigMap. Each RemediationPolicy gets its own ConfigMap with ownerReference for automatic cleanup.
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: dot-ai-controller-cooldown-state
-  namespace: <controller-namespace>
+  name: <policy-name>-cooldown-state    # Same name as CR + suffix
+  namespace: <policy-namespace>          # Same namespace as CR
   labels:
     app.kubernetes.io/component: cooldown-state
     app.kubernetes.io/managed-by: dot-ai-controller
+  ownerReferences:
+    - apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+      kind: RemediationPolicy
+      name: <policy-name>
+      uid: <policy-uid>
 data:
-  # JSON-encoded cooldown entries
+  # JSON-encoded cooldown entries (simpler keys - no policy prefix needed)
   cooldowns: |
     {
-      "policy1/namespace/object/reason1": "2025-12-04T10:30:00Z",
-      "policy2/namespace/object/reason2": "2025-12-04T14:00:00Z"
+      "namespace/object/reason1": "2025-12-04T10:30:00Z",
+      "namespace/object/reason2": "2025-12-04T14:00:00Z"
     }
   # Metadata
   lastSync: "2025-12-03T10:00:00Z"
   version: "1"
 ```
 
-### Configuration Flags
+**Benefits of per-CR ConfigMaps**:
+- Automatic cleanup via ownerReferences when policy is deleted
+- Natural isolation between policies
+- Simpler key format (no policy prefix needed)
+- Bounded size per policy
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--cooldown-persistence-enabled` | `true` | Enable cooldown state persistence |
-| `--cooldown-sync-interval` | `60s` | How often to sync to ConfigMap |
-| `--cooldown-configmap-name` | `dot-ai-controller-cooldown-state` | Name of the ConfigMap |
-| `--cooldown-min-persist-duration` | `1h` | Only persist cooldowns longer than this |
+### Per-Policy Persistence Configuration
+
+Persistence is enabled by default for all policies. Individual policies can opt out:
+
+```yaml
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: RemediationPolicy
+metadata:
+  name: my-policy
+spec:
+  # ... other fields ...
+  persistence:
+    enabled: false  # Disable persistence for this policy (default: true)
+```
+
+**Hardcoded defaults** (no controller flags):
+- Sync interval: 60 seconds
+- Minimum persist duration: 1 hour (only cooldowns >= 1h are persisted)
+
+*Note: ConfigMap name is derived from policy name (`<policy-name>-cooldown-state`).*
 
 ### What Gets Persisted
 
@@ -122,29 +147,36 @@ data:
 ### Controller Changes
 
 ```go
-// CooldownPersistence handles ConfigMap-based state persistence
+// CooldownPersistence handles per-CR ConfigMap-based state persistence.
+// Persistence is enabled by default; individual policies can opt out
+// via spec.persistence.enabled=false.
 type CooldownPersistence struct {
-    client        client.Client
-    namespace     string
-    configMapName string
-    syncInterval  time.Duration
-    minDuration   time.Duration
-
-    mu            sync.RWMutex
-    dirtyEntries  map[string]bool
+    client       client.Client
+    scheme       *runtime.Scheme
+    mu           sync.RWMutex
+    dirtyEntries map[string]bool
+    getCooldowns func() map[string]time.Time
+    stopCh       chan struct{}
+    doneCh       chan struct{}
 }
 
-// Load restores cooldown state from ConfigMap
-func (p *CooldownPersistence) Load(ctx context.Context) (map[string]time.Time, error)
+// IsPolicyPersistenceEnabled checks if persistence is enabled for a policy
+func IsPolicyPersistenceEnabled(policy *RemediationPolicy) bool
 
-// MarkDirty flags an entry for persistence
-func (p *CooldownPersistence) MarkDirty(key string)
+// Load restores cooldown state from all RemediationPolicy ConfigMaps
+func (p *CooldownPersistence) Load(ctx context.Context) map[string]time.Time
 
-// Sync writes dirty entries to ConfigMap
+// MarkDirty flags an entry for persistence (caller checks IsPolicyPersistenceEnabled)
+func (p *CooldownPersistence) MarkDirty(fullKey string, cooldownEnd time.Time)
+
+// Sync writes dirty entries to per-policy ConfigMaps
 func (p *CooldownPersistence) Sync(ctx context.Context, cooldowns map[string]time.Time) error
 
 // StartPeriodicSync starts background sync goroutine
 func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldowns func() map[string]time.Time)
+
+// Stop performs final sync on shutdown
+func (p *CooldownPersistence) Stop()
 ```
 
 ### RBAC Requirements
@@ -161,51 +193,56 @@ func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldown
 
 | File | Changes |
 |------|---------|
-| `cmd/main.go` | Add persistence flags, initialize CooldownPersistence |
-| `internal/controller/remediationpolicy_controller.go` | Integrate persistence, mark dirty on cooldown update |
-| `internal/controller/persistence.go` (new) | CooldownPersistence implementation |
+| `api/v1alpha1/remediationpolicy_types.go` | Add `PersistenceConfig` struct and `Persistence` field |
+| `cmd/main.go` | Initialize CooldownPersistence |
+| `internal/controller/remediationpolicy_controller.go` | Integrate persistence, load state on startup |
+| `internal/controller/remediationpolicy_ratelimit.go` | Mark dirty on cooldown update (check per-CR setting) |
+| `internal/controller/persistence.go` (new) | CooldownPersistence implementation with per-CR support |
 | `config/rbac/role.yaml` | Add ConfigMap permissions |
-| `charts/dot-ai-controller/templates/rbac.yaml` | Add ConfigMap permissions |
+| `charts/dot-ai-controller/templates/manager-role.yaml` | Add ConfigMap permissions |
+| `charts/dot-ai-controller/templates/dot-ai.devopstoolkit.live_remediationpolicies.yaml` | Updated CRD |
 
 ## Success Criteria
 
 1. **State survives restarts**: Cooldown state persisted and restored correctly
 2. **Minimal API load**: ConfigMap updated at most once per sync interval
 3. **Graceful degradation**: Controller works normally if ConfigMap operations fail
-4. **Configurable**: All persistence settings configurable via flags
+4. **Configurable**: Persistence can be disabled per-policy via `spec.persistence.enabled`
 5. **Observable**: Logs indicate sync operations and any failures
 6. **Size bounded**: Expired entries pruned; ConfigMap stays well under 1MB limit
 
 ## Milestones
 
 ### Milestone 1: Core Persistence Infrastructure
-- [ ] Create CooldownPersistence struct with Load/Sync methods
-- [ ] Implement ConfigMap read/write with proper error handling
-- [ ] Add JSON serialization for cooldown entries
-- [ ] Implement entry pruning for expired cooldowns
+- [x] Create CooldownPersistence struct with Load/Sync methods
+- [x] Implement ConfigMap read/write with proper error handling
+- [x] Add JSON serialization for cooldown entries
+- [x] Implement entry pruning for expired cooldowns
 
 ### Milestone 2: Controller Integration
-- [ ] Add persistence flags to cmd/main.go
-- [ ] Initialize CooldownPersistence on startup
-- [ ] Load existing state on controller start
-- [ ] Mark entries dirty when cooldown is set
-- [ ] Start periodic sync goroutine
+- [x] Initialize CooldownPersistence on startup
+- [x] Load existing state on controller start
+- [x] Mark entries dirty when cooldown is set (with per-CR check)
+- [x] Start periodic sync goroutine
 
-### Milestone 3: Graceful Shutdown Integration
-- [ ] Perform final sync on SIGTERM (integrate with PRD #19)
-- [ ] Ensure sync completes before shutdown
-- [ ] Log any entries that couldn't be persisted
+### Milestone 3: Minimal Shutdown Sync
+- [x] Perform final sync when context is cancelled (controller-runtime handles SIGTERM)
+- [x] Log sync completion or failures
+
+*Note: This is minimal shutdown handling for persistence only. Extensive graceful shutdown (draining in-flight MCP operations, shutdown-aware readiness probes, configurable timeouts) remains in PRD #19.*
 
 ### Milestone 4: RBAC and Helm Chart Updates
-- [ ] Update ClusterRole with ConfigMap permissions
-- [ ] Add persistence configuration to Helm values
-- [ ] Update Helm templates for new flags
+- [x] Update ClusterRole with ConfigMap permissions
+- [x] Update Helm chart CRD with `spec.persistence` field
+- [x] Update Helm chart `manager-role.yaml` with ConfigMap create permission
+
+*Note: Design simplified - no controller flags needed, so no Helm values/templates changes required.*
 
 ### Milestone 5: Testing and Documentation
-- [ ] Unit tests for CooldownPersistence
-- [ ] Integration tests for state restoration
-- [ ] E2E test for persistence across restart
-- [ ] Update documentation with persistence configuration
+- [x] Unit tests for CooldownPersistence
+- [x] Integration tests for state restoration
+- [x] E2E test for persistence across restart
+- [x] Update documentation with persistence configuration
 
 ## Risks & Mitigations
 
@@ -219,9 +256,10 @@ func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldown
 
 ## Dependencies
 
-- PRD #19 (Graceful Shutdown) - for final sync on shutdown
 - Kubernetes ConfigMap API
-- No external dependencies
+- controller-runtime's context cancellation on SIGTERM (built-in)
+
+*Note: PRD #19 (Graceful Shutdown) is complementary but not a blocker. This PRD handles minimal shutdown sync; PRD #19 handles draining in-flight MCP operations.*
 
 ## Out of Scope
 
@@ -261,6 +299,11 @@ Accept state loss on restart.
 | Date | Update |
 |------|--------|
 | 2025-12-03 | PRD created based on @barth12 feedback in issue #16 |
+| 2025-12-15 | Milestone 1 & 2 complete. Design changed to per-CR ConfigMaps (ownerReferences for auto-cleanup). Created `persistence.go`, integrated with controller, added flags. RBAC updated. |
+| 2025-12-15 | Milestone 3 complete. Added shutdown sync: `Stop()` method now uses stored `getCooldowns` callback, creates fresh context with 30s timeout, called from `main.go` after manager exits. |
+| 2025-12-15 | **Design simplification**: Removed controller-level flags (`--cooldown-persistence-enabled`, `--cooldown-sync-interval`, `--cooldown-min-persist-duration`). Added per-CR `spec.persistence.enabled` field (default: true). Hardcoded sensible defaults (60s sync, 1h min duration). Updated CRD, persistence.go, controller, Helm chart CRD, and manager-role.yaml. Milestone 4 complete. |
+| 2025-12-15 | **Milestone 5 testing complete**: Added comprehensive unit tests in `persistence_test.go` (helper functions, MarkDirty, Load/Sync integration, lifecycle). Added two e2e tests demonstrating persistence behavior. Fixed critical bug: `Load()` was called before cache ready - changed to use `manager.RunnableFunc` with `WaitForCacheSync()`. Fixed key format mismatch (4 parts vs 5). Added env var support (`COOLDOWN_SYNC_INTERVAL`, `COOLDOWN_MIN_PERSIST_DURATION`) for test configuration. All 15 e2e tests passing. |
+| 2025-12-16 | **PRD Complete**: Added persistence documentation to `docs/remediation-guide.md` under "Other Settings" section. All milestones complete. |
 
 ---
 

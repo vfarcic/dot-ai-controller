@@ -246,6 +246,18 @@ spec:
                         type: object
                     type: object
                 type: object
+              persistence:
+                description: |-
+                  Persistence configuration for cooldown state
+                  When not specified, persistence is enabled by default
+                properties:
+                  enabled:
+                    default: true
+                    description: |-
+                      Enable cooldown state persistence for this policy
+                      When enabled, cooldown state survives pod restarts via ConfigMap storage
+                    type: boolean
+                type: object
               rateLimiting:
                 description: Rate limiting configuration
                 properties:

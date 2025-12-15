@@ -67,6 +67,7 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -200,11 +201,19 @@ func main() {
 		},
 	}
 
+	// Create cooldown persistence for surviving pod restarts
+	// Persistence is enabled by default; individual policies can opt out via spec.persistence.enabled=false
+	cooldownPersistence := controller.NewCooldownPersistence(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+	)
+
 	if err := (&controller.RemediationPolicyReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Recorder:   mgr.GetEventRecorderFor("dot-ai-controller"),
-		HttpClient: httpClient,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		Recorder:            mgr.GetEventRecorderFor("dot-ai-controller"),
+		HttpClient:          httpClient,
+		CooldownPersistence: cooldownPersistence,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RemediationPolicy")
 		os.Exit(1)
@@ -250,4 +259,7 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+
+	// Perform final cooldown state sync on shutdown
+	cooldownPersistence.Stop()
 }

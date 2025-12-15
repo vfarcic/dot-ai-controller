@@ -230,7 +230,13 @@ func (r *RemediationPolicyReconciler) isRateLimited(ctx context.Context, policy 
 			if r.cooldownTracking == nil {
 				r.cooldownTracking = make(map[string]time.Time)
 			}
-			r.cooldownTracking[key] = now.Add(time.Duration(policy.Spec.RateLimiting.CooldownMinutes) * time.Minute)
+			cooldownEnd := now.Add(time.Duration(policy.Spec.RateLimiting.CooldownMinutes) * time.Minute)
+			r.cooldownTracking[key] = cooldownEnd
+
+			// Mark for persistence if enabled for this policy
+			if r.CooldownPersistence != nil && IsPolicyPersistenceEnabled(policy) {
+				r.CooldownPersistence.MarkDirty(key, cooldownEnd)
+			}
 		}
 	}
 

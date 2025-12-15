@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	dotaiv1alpha1 "github.com/vfarcic/dot-ai-controller/api/v1alpha1"
 )
@@ -37,6 +38,10 @@ type RemediationPolicyReconciler struct {
 	Scheme     *runtime.Scheme
 	Recorder   record.EventRecorder
 	HttpClient *http.Client
+
+	// CooldownPersistence handles persisting cooldown state to ConfigMaps
+	// to survive pod restarts
+	CooldownPersistence *CooldownPersistence
 
 	// startupTime records when the controller started.
 	// Events with lastTimestamp before this time are ignored to prevent
@@ -68,6 +73,7 @@ type RemediationPolicyReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=create
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;create;update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch
@@ -741,6 +747,45 @@ func (r *RemediationPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Record startup time to filter out historical events on restart
 	r.startupTime = time.Now()
 
+	// Add a Runnable to load persisted cooldown state after manager starts
+	// This must be done after the cache is ready, not during SetupWithManager
+	if r.CooldownPersistence != nil {
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			logger := logf.FromContext(ctx).WithName("cooldown-persistence-init")
+
+			// Wait for cache to sync before loading
+			if !mgr.GetCache().WaitForCacheSync(ctx) {
+				logger.Error(nil, "Cache sync failed, skipping cooldown persistence load")
+				return nil
+			}
+
+			// Load persisted cooldowns
+			persistedCooldowns := r.CooldownPersistence.Load(ctx)
+
+			// Initialize in-memory maps with persisted state
+			r.rateLimitMu.Lock()
+			if r.cooldownTracking == nil {
+				r.cooldownTracking = make(map[string]time.Time)
+			}
+			for key, cooldownEnd := range persistedCooldowns {
+				r.cooldownTracking[key] = cooldownEnd
+			}
+			r.rateLimitMu.Unlock()
+
+			logger.Info("Restored cooldown state from persistence",
+				"entries", len(persistedCooldowns))
+
+			// Start periodic sync
+			r.CooldownPersistence.StartPeriodicSync(ctx, r.getCooldownsForPersistence)
+
+			// Block until context is done (keep the runnable alive)
+			<-ctx.Done()
+			return nil
+		})); err != nil {
+			return fmt.Errorf("failed to add cooldown persistence runnable: %w", err)
+		}
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Event{}).
 		Watches(
@@ -749,4 +794,16 @@ func (r *RemediationPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		).
 		Named("remediationpolicy").
 		Complete(r)
+}
+
+// getCooldownsForPersistence returns a copy of cooldown tracking map for persistence
+func (r *RemediationPolicyReconciler) getCooldownsForPersistence() map[string]time.Time {
+	r.rateLimitMu.RLock()
+	defer r.rateLimitMu.RUnlock()
+
+	result := make(map[string]time.Time, len(r.cooldownTracking))
+	for k, v := range r.cooldownTracking {
+		result[k] = v
+	}
+	return result
 }
