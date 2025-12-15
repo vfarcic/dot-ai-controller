@@ -239,9 +239,9 @@ func (p *CooldownPersistence) Stop()
 *Note: Design simplified - no controller flags needed, so no Helm values/templates changes required.*
 
 ### Milestone 5: Testing and Documentation
-- [ ] Unit tests for CooldownPersistence
-- [ ] Integration tests for state restoration
-- [ ] E2E test for persistence across restart
+- [x] Unit tests for CooldownPersistence
+- [x] Integration tests for state restoration
+- [x] E2E test for persistence across restart
 - [ ] Update documentation with persistence configuration
 
 ## Risks & Mitigations
@@ -302,6 +302,7 @@ Accept state loss on restart.
 | 2025-12-15 | Milestone 1 & 2 complete. Design changed to per-CR ConfigMaps (ownerReferences for auto-cleanup). Created `persistence.go`, integrated with controller, added flags. RBAC updated. |
 | 2025-12-15 | Milestone 3 complete. Added shutdown sync: `Stop()` method now uses stored `getCooldowns` callback, creates fresh context with 30s timeout, called from `main.go` after manager exits. |
 | 2025-12-15 | **Design simplification**: Removed controller-level flags (`--cooldown-persistence-enabled`, `--cooldown-sync-interval`, `--cooldown-min-persist-duration`). Added per-CR `spec.persistence.enabled` field (default: true). Hardcoded sensible defaults (60s sync, 1h min duration). Updated CRD, persistence.go, controller, Helm chart CRD, and manager-role.yaml. Milestone 4 complete. |
+| 2025-12-15 | **Milestone 5 testing complete**: Added comprehensive unit tests in `persistence_test.go` (helper functions, MarkDirty, Load/Sync integration, lifecycle). Added two e2e tests demonstrating persistence behavior. Fixed critical bug: `Load()` was called before cache ready - changed to use `manager.RunnableFunc` with `WaitForCacheSync()`. Fixed key format mismatch (4 parts vs 5). Added env var support (`COOLDOWN_SYNC_INTERVAL`, `COOLDOWN_MIN_PERSIST_DURATION`) for test configuration. All 15 e2e tests passing. |
 
 ---
 

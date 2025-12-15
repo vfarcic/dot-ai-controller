@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	dotaiv1alpha1 "github.com/vfarcic/dot-ai-controller/api/v1alpha1"
 )
@@ -746,29 +747,43 @@ func (r *RemediationPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Record startup time to filter out historical events on restart
 	r.startupTime = time.Now()
 
-	// Load persisted cooldown state
+	// Add a Runnable to load persisted cooldown state after manager starts
+	// This must be done after the cache is ready, not during SetupWithManager
 	if r.CooldownPersistence != nil {
-		ctx := context.Background()
-		logger := logf.FromContext(ctx).WithName("setup")
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			logger := logf.FromContext(ctx).WithName("cooldown-persistence-init")
 
-		// Load persisted cooldowns
-		persistedCooldowns := r.CooldownPersistence.Load(ctx)
+			// Wait for cache to sync before loading
+			if !mgr.GetCache().WaitForCacheSync(ctx) {
+				logger.Error(nil, "Cache sync failed, skipping cooldown persistence load")
+				return nil
+			}
 
-		// Initialize in-memory maps with persisted state
-		r.rateLimitMu.Lock()
-		if r.cooldownTracking == nil {
-			r.cooldownTracking = make(map[string]time.Time)
+			// Load persisted cooldowns
+			persistedCooldowns := r.CooldownPersistence.Load(ctx)
+
+			// Initialize in-memory maps with persisted state
+			r.rateLimitMu.Lock()
+			if r.cooldownTracking == nil {
+				r.cooldownTracking = make(map[string]time.Time)
+			}
+			for key, cooldownEnd := range persistedCooldowns {
+				r.cooldownTracking[key] = cooldownEnd
+			}
+			r.rateLimitMu.Unlock()
+
+			logger.Info("Restored cooldown state from persistence",
+				"entries", len(persistedCooldowns))
+
+			// Start periodic sync
+			r.CooldownPersistence.StartPeriodicSync(ctx, r.getCooldownsForPersistence)
+
+			// Block until context is done (keep the runnable alive)
+			<-ctx.Done()
+			return nil
+		})); err != nil {
+			return fmt.Errorf("failed to add cooldown persistence runnable: %w", err)
 		}
-		for key, cooldownEnd := range persistedCooldowns {
-			r.cooldownTracking[key] = cooldownEnd
-		}
-		r.rateLimitMu.Unlock()
-
-		logger.Info("Restored cooldown state from persistence",
-			"entries", len(persistedCooldowns))
-
-		// Start periodic sync
-		r.CooldownPersistence.StartPeriodicSync(ctx, r.getCooldownsForPersistence)
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).

@@ -60,6 +60,20 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
+		By("configuring fast persistence sync for e2e tests")
+		cmd = exec.Command("kubectl", "set", "env", "deployment/controller-init-controller-manager",
+			"-n", namespace,
+			"COOLDOWN_SYNC_INTERVAL=5s",
+			"COOLDOWN_MIN_PERSIST_DURATION=10s")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to configure persistence env vars")
+
+		By("waiting for controller deployment rollout to complete")
+		cmd = exec.Command("kubectl", "rollout", "status", "deployment/controller-init-controller-manager",
+			"-n", namespace, "--timeout=120s")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed waiting for rollout")
+
 		By("creating test namespace without security restrictions")
 		cmd = exec.Command("kubectl", "create", "ns", testNamespace)
 		_, err = utils.Run(cmd)
@@ -1266,6 +1280,292 @@ spec:
 			cmd = exec.Command("kubectl", "delete", "remediationpolicy", "first-policy", "-n", namespace)
 			_, _ = utils.Run(cmd)
 			cmd = exec.Command("kubectl", "delete", "remediationpolicy", "second-policy", "-n", namespace)
+			_, _ = utils.Run(cmd)
+		})
+	})
+
+	Context("Cooldown State Persistence", func() {
+		// These tests validate that cooldown state persistence works correctly across pod restarts
+
+		It("should lose cooldown state after restart when persistence is disabled (demonstrates the problem)", func() {
+			By("creating a RemediationPolicy with persistence explicitly disabled")
+			policyNoPersist := `
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: RemediationPolicy
+metadata:
+  name: no-persist-policy
+  namespace: ` + namespace + `
+spec:
+  eventSelectors:
+  - type: Warning
+    reason: FailedScheduling
+    involvedObjectKind: Pod
+    mode: manual
+  mcpEndpoint: http://mock-mcp-server.e2e-tests.svc.cluster.local:3456/api/v1/tools/remediate
+  mode: manual
+  rateLimiting:
+    eventsPerMinute: 100
+    cooldownMinutes: 60
+  persistence:
+    enabled: false
+`
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(policyNoPersist)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create policy without persistence")
+
+			By("creating a pod that will fail to schedule and trigger cooldown")
+			failingPod := `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-persist-test-pod
+  namespace: ` + namespace + `
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: test
+    image: nginx:latest
+    resources:
+      requests:
+        cpu: "1000"
+        memory: "10Gi"
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 65534
+  restartPolicy: Never
+`
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(failingPod)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create failing pod")
+
+			By("waiting for event to be processed and cooldown to be set")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "remediationpolicy", "no-persist-policy",
+					"-n", namespace, "-o", "jsonpath={.status.totalEventsProcessed}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(Equal(""))
+				g.Expect(output).NotTo(Equal("0"))
+			}, 60*time.Second).Should(Succeed())
+
+			By("verifying no ConfigMap was created (persistence disabled)")
+			cmd = exec.Command("kubectl", "get", "configmap", "no-persist-policy-cooldown-state", "-n", namespace)
+			_, err = utils.Run(cmd)
+			Expect(err).To(HaveOccurred(), "ConfigMap should NOT exist when persistence is disabled")
+
+			By("deleting the failing pod before restart")
+			cmd = exec.Command("kubectl", "delete", "pod", "no-persist-test-pod", "-n", namespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+
+			By("restarting the controller pod to simulate pod restart")
+			cmd = exec.Command("kubectl", "delete", "pod", "-l", "control-plane=controller-manager", "-n", namespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete controller pod")
+
+			By("waiting for controller to be ready again")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pods", "-l", "control-plane=controller-manager",
+					"-n", namespace, "-o", "jsonpath={.items[0].status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Running"))
+			}, 120*time.Second).Should(Succeed())
+
+			// Wait for controller to become leader and start processing
+			time.Sleep(10 * time.Second)
+
+			By("recording event count before recreating pod")
+			var countBeforeRecreate string
+			cmd = exec.Command("kubectl", "get", "remediationpolicy", "no-persist-policy",
+				"-n", namespace, "-o", "jsonpath={.status.totalEventsProcessed}")
+			countBeforeRecreate, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("recreating the failing pod to generate a NEW event after restart")
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(failingPod)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to recreate failing pod")
+
+			By("verifying cooldown state was lost - new event should be processed (not suppressed by cooldown)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "remediationpolicy", "no-persist-policy",
+					"-n", namespace, "-o", "jsonpath={.status.totalEventsProcessed}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				// After restart with no persistence, the new event should be processed
+				// because cooldown state was lost
+				g.Expect(output).NotTo(Equal(countBeforeRecreate),
+					"Event count should increase after restart when persistence is disabled (cooldown lost)")
+			}, 60*time.Second).Should(Succeed())
+
+			By("cleaning up test resources")
+			cmd = exec.Command("kubectl", "delete", "pod", "no-persist-test-pod", "-n", namespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "remediationpolicy", "no-persist-policy", "-n", namespace)
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should preserve cooldown state after restart when persistence is enabled (demonstrates the solution)", func() {
+			By("creating a RemediationPolicy with persistence enabled (default)")
+			policyWithPersist := `
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: RemediationPolicy
+metadata:
+  name: persist-policy
+  namespace: ` + namespace + `
+spec:
+  eventSelectors:
+  - type: Warning
+    reason: FailedScheduling
+    involvedObjectKind: Pod
+    mode: manual
+  mcpEndpoint: http://mock-mcp-server.e2e-tests.svc.cluster.local:3456/api/v1/tools/remediate
+  mode: manual
+  rateLimiting:
+    eventsPerMinute: 100
+    cooldownMinutes: 120
+`
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(policyWithPersist)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create policy with persistence")
+
+			By("creating a pod that will fail to schedule and trigger cooldown")
+			failingPod := `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: persist-test-pod
+  namespace: ` + namespace + `
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: test
+    image: nginx:latest
+    resources:
+      requests:
+        cpu: "1000"
+        memory: "10Gi"
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 65534
+  restartPolicy: Never
+`
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(failingPod)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create failing pod")
+
+			By("waiting for event to be processed and cooldown to be set")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "remediationpolicy", "persist-policy",
+					"-n", namespace, "-o", "jsonpath={.status.totalEventsProcessed}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(Equal(""))
+				g.Expect(output).NotTo(Equal("0"))
+			}, 60*time.Second).Should(Succeed())
+
+			By("waiting for ConfigMap to be created with cooldown state")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", "persist-policy-cooldown-state",
+					"-n", namespace, "-o", "jsonpath={.data.cooldowns}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "ConfigMap should exist when persistence is enabled")
+				g.Expect(output).NotTo(BeEmpty(), "ConfigMap should have cooldown data")
+			}, 30*time.Second, 2*time.Second).Should(Succeed())
+
+			By("verifying ConfigMap has correct labels and ownerReference")
+			cmd = exec.Command("kubectl", "get", "configmap", "persist-policy-cooldown-state",
+				"-n", namespace, "-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("dot-ai-controller"), "ConfigMap should have correct managed-by label")
+
+			cmd = exec.Command("kubectl", "get", "configmap", "persist-policy-cooldown-state",
+				"-n", namespace, "-o", "jsonpath={.metadata.ownerReferences[0].kind}")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("RemediationPolicy"), "ConfigMap should have ownerReference to RemediationPolicy")
+
+			By("deleting the failing pod before restart")
+			cmd = exec.Command("kubectl", "delete", "pod", "persist-test-pod", "-n", namespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+
+			By("restarting the controller pod to simulate pod restart")
+			cmd = exec.Command("kubectl", "delete", "pod", "-l", "control-plane=controller-manager", "-n", namespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete controller pod")
+
+			By("waiting for controller to be ready again")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pods", "-l", "control-plane=controller-manager",
+					"-n", namespace, "-o", "jsonpath={.items[0].status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Running"))
+			}, 120*time.Second).Should(Succeed())
+
+			// Wait for controller to become leader and load persisted state
+			time.Sleep(15 * time.Second)
+
+			By("recording event count before recreating pod")
+			var countBeforeRecreate string
+			cmd = exec.Command("kubectl", "get", "remediationpolicy", "persist-policy",
+				"-n", namespace, "-o", "jsonpath={.status.totalEventsProcessed}")
+			countBeforeRecreate, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("recreating the failing pod to generate a NEW event after restart")
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(failingPod)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to recreate failing pod")
+
+			By("waiting for new event to be generated")
+			time.Sleep(10 * time.Second)
+
+			By("verifying cooldown state was preserved - new event should be SUPPRESSED (cooldown restored)")
+			// The event count should remain the same because the cooldown was restored from ConfigMap
+			cmd = exec.Command("kubectl", "get", "remediationpolicy", "persist-policy",
+				"-n", namespace, "-o", "jsonpath={.status.totalEventsProcessed}")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal(countBeforeRecreate),
+				"Event count should remain the same when persistence is enabled (cooldown preserved, new event suppressed)")
+
+			By("verifying ConfigMap still exists after restart")
+			cmd = exec.Command("kubectl", "get", "configmap", "persist-policy-cooldown-state", "-n", namespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "ConfigMap should still exist after controller restart")
+
+			By("cleaning up test resources")
+			cmd = exec.Command("kubectl", "delete", "pod", "persist-test-pod", "-n", namespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "remediationpolicy", "persist-policy", "-n", namespace)
 			_, _ = utils.Run(cmd)
 		})
 	})

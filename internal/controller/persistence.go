@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,10 @@ const (
 	// DefaultMinPersistDuration is the minimum cooldown duration to persist
 	DefaultMinPersistDuration = 1 * time.Hour
 
+	// Environment variable names for configuration
+	EnvCooldownSyncInterval = "COOLDOWN_SYNC_INTERVAL"
+	EnvMinPersistDuration   = "COOLDOWN_MIN_PERSIST_DURATION"
+
 	// configMapSuffix is appended to CR name for the ConfigMap
 	configMapSuffix = "-cooldown-state"
 
@@ -41,6 +46,26 @@ const (
 	// currentVersion is the current persistence format version
 	currentVersion = "1"
 )
+
+// GetCooldownSyncInterval returns the sync interval from env var or default
+func GetCooldownSyncInterval() time.Duration {
+	if val := os.Getenv(EnvCooldownSyncInterval); val != "" {
+		if d, err := time.ParseDuration(val); err == nil {
+			return d
+		}
+	}
+	return DefaultCooldownSyncInterval
+}
+
+// GetMinPersistDuration returns the min persist duration from env var or default
+func GetMinPersistDuration() time.Duration {
+	if val := os.Getenv(EnvMinPersistDuration); val != "" {
+		if d, err := time.ParseDuration(val); err == nil {
+			return d
+		}
+	}
+	return DefaultMinPersistDuration
+}
 
 // CooldownPersistence handles per-CR ConfigMap-based state persistence.
 // Each RemediationPolicy CR gets its own ConfigMap with ownerReference
@@ -79,11 +104,12 @@ func getConfigMapName(policyName string) string {
 }
 
 // parseFullKey parses a full cooldown key into its components
-// Full key format: policy-ns/policy-name/obj-ns/obj-name/reason
-// Returns: policyNs, policyName, shortKey (obj-ns/obj-name/reason)
+// Full key format: policy-ns/policy-name/obj-ns/obj-identifier
+// (obj-identifier may contain colons for Kind:Name format, e.g., "Job:my-job")
+// Returns: policyNs, policyName, shortKey (obj-ns/obj-identifier)
 func parseFullKey(fullKey string) (policyNs, policyName, shortKey string, ok bool) {
-	parts := strings.SplitN(fullKey, "/", 5)
-	if len(parts) < 5 {
+	parts := strings.SplitN(fullKey, "/", 4)
+	if len(parts) < 4 {
 		return "", "", "", false
 	}
 	return parts[0], parts[1], strings.Join(parts[2:], "/"), true
@@ -209,7 +235,7 @@ func (p *CooldownPersistence) loadPolicyState(ctx context.Context, policy *dotai
 // The caller (controller) should check IsPolicyPersistenceEnabled before calling this.
 func (p *CooldownPersistence) MarkDirty(fullKey string, cooldownEnd time.Time) {
 	// Only persist cooldowns with sufficient remaining duration
-	if time.Until(cooldownEnd) < DefaultMinPersistDuration {
+	if time.Until(cooldownEnd) < GetMinPersistDuration() {
 		return
 	}
 
@@ -242,7 +268,7 @@ func (p *CooldownPersistence) Sync(ctx context.Context, cooldowns map[string]tim
 			continue
 		}
 		// Only persist long cooldowns
-		if cooldownEnd.Sub(now) < DefaultMinPersistDuration {
+		if cooldownEnd.Sub(now) < GetMinPersistDuration() {
 			continue
 		}
 
@@ -394,14 +420,16 @@ func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldown
 	// Store callback for use during Stop
 	p.getCooldowns = getCooldowns
 
+	syncInterval := GetCooldownSyncInterval()
+	minDuration := GetMinPersistDuration()
 	logger.Info("Starting periodic cooldown sync",
-		"interval", DefaultCooldownSyncInterval,
-		"minDuration", DefaultMinPersistDuration)
+		"interval", syncInterval,
+		"minDuration", minDuration)
 
 	go func() {
 		defer close(p.doneCh)
 
-		ticker := time.NewTicker(DefaultCooldownSyncInterval)
+		ticker := time.NewTicker(syncInterval)
 		defer ticker.Stop()
 
 		for {
