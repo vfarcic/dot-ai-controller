@@ -38,6 +38,10 @@ type RemediationPolicyReconciler struct {
 	Recorder   record.EventRecorder
 	HttpClient *http.Client
 
+	// CooldownPersistence handles persisting cooldown state to ConfigMaps
+	// to survive pod restarts
+	CooldownPersistence *CooldownPersistence
+
 	// startupTime records when the controller started.
 	// Events with lastTimestamp before this time are ignored to prevent
 	// notification storms on controller restart.
@@ -68,6 +72,7 @@ type RemediationPolicyReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=create
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;create;update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch
@@ -741,6 +746,31 @@ func (r *RemediationPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Record startup time to filter out historical events on restart
 	r.startupTime = time.Now()
 
+	// Load persisted cooldown state if persistence is enabled
+	if r.CooldownPersistence != nil && r.CooldownPersistence.IsEnabled() {
+		ctx := context.Background()
+		logger := logf.FromContext(ctx).WithName("setup")
+
+		// Load persisted cooldowns
+		persistedCooldowns := r.CooldownPersistence.Load(ctx)
+
+		// Initialize in-memory maps with persisted state
+		r.rateLimitMu.Lock()
+		if r.cooldownTracking == nil {
+			r.cooldownTracking = make(map[string]time.Time)
+		}
+		for key, cooldownEnd := range persistedCooldowns {
+			r.cooldownTracking[key] = cooldownEnd
+		}
+		r.rateLimitMu.Unlock()
+
+		logger.Info("Restored cooldown state from persistence",
+			"entries", len(persistedCooldowns))
+
+		// Start periodic sync
+		r.CooldownPersistence.StartPeriodicSync(ctx, r.getCooldownsForPersistence)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Event{}).
 		Watches(
@@ -749,4 +779,16 @@ func (r *RemediationPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		).
 		Named("remediationpolicy").
 		Complete(r)
+}
+
+// getCooldownsForPersistence returns a copy of cooldown tracking map for persistence
+func (r *RemediationPolicyReconciler) getCooldownsForPersistence() map[string]time.Time {
+	r.rateLimitMu.RLock()
+	defer r.rateLimitMu.RUnlock()
+
+	result := make(map[string]time.Time, len(r.cooldownTracking))
+	for k, v := range r.cooldownTracking {
+		result[k] = v
+	}
+	return result
 }

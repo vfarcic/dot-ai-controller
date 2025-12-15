@@ -1,7 +1,7 @@
 # PRD: Persist Rate Limit State Across Pod Restarts
 
 **Issue**: [#20](https://github.com/vfarcic/dot-ai-controller/issues/20)
-**Status**: Not Started
+**Status**: In Progress
 **Priority**: High
 **Created**: 2025-12-03
 
@@ -81,26 +81,39 @@ Persist cooldown state to a ConfigMap with periodic batch sync, restoring state 
 
 ### ConfigMap Structure
 
+**Design Decision**: Per-CR ConfigMaps instead of a single global ConfigMap. Each RemediationPolicy gets its own ConfigMap with ownerReference for automatic cleanup.
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: dot-ai-controller-cooldown-state
-  namespace: <controller-namespace>
+  name: <policy-name>-cooldown-state    # Same name as CR + suffix
+  namespace: <policy-namespace>          # Same namespace as CR
   labels:
     app.kubernetes.io/component: cooldown-state
     app.kubernetes.io/managed-by: dot-ai-controller
+  ownerReferences:
+    - apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+      kind: RemediationPolicy
+      name: <policy-name>
+      uid: <policy-uid>
 data:
-  # JSON-encoded cooldown entries
+  # JSON-encoded cooldown entries (simpler keys - no policy prefix needed)
   cooldowns: |
     {
-      "policy1/namespace/object/reason1": "2025-12-04T10:30:00Z",
-      "policy2/namespace/object/reason2": "2025-12-04T14:00:00Z"
+      "namespace/object/reason1": "2025-12-04T10:30:00Z",
+      "namespace/object/reason2": "2025-12-04T14:00:00Z"
     }
   # Metadata
   lastSync: "2025-12-03T10:00:00Z"
   version: "1"
 ```
+
+**Benefits of per-CR ConfigMaps**:
+- Automatic cleanup via ownerReferences when policy is deleted
+- Natural isolation between policies
+- Simpler key format (no policy prefix needed)
+- Bounded size per policy
 
 ### Configuration Flags
 
@@ -108,8 +121,9 @@ data:
 |------|---------|-------------|
 | `--cooldown-persistence-enabled` | `true` | Enable cooldown state persistence |
 | `--cooldown-sync-interval` | `60s` | How often to sync to ConfigMap |
-| `--cooldown-configmap-name` | `dot-ai-controller-cooldown-state` | Name of the ConfigMap |
 | `--cooldown-min-persist-duration` | `1h` | Only persist cooldowns longer than this |
+
+*Note: ConfigMap name is derived from policy name (`<policy-name>-cooldown-state`) - no flag needed.*
 
 ### What Gets Persisted
 
@@ -179,17 +193,17 @@ func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldown
 ## Milestones
 
 ### Milestone 1: Core Persistence Infrastructure
-- [ ] Create CooldownPersistence struct with Load/Sync methods
-- [ ] Implement ConfigMap read/write with proper error handling
-- [ ] Add JSON serialization for cooldown entries
-- [ ] Implement entry pruning for expired cooldowns
+- [x] Create CooldownPersistence struct with Load/Sync methods
+- [x] Implement ConfigMap read/write with proper error handling
+- [x] Add JSON serialization for cooldown entries
+- [x] Implement entry pruning for expired cooldowns
 
 ### Milestone 2: Controller Integration
-- [ ] Add persistence flags to cmd/main.go
-- [ ] Initialize CooldownPersistence on startup
-- [ ] Load existing state on controller start
-- [ ] Mark entries dirty when cooldown is set
-- [ ] Start periodic sync goroutine
+- [x] Add persistence flags to cmd/main.go
+- [x] Initialize CooldownPersistence on startup
+- [x] Load existing state on controller start
+- [x] Mark entries dirty when cooldown is set
+- [x] Start periodic sync goroutine
 
 ### Milestone 3: Graceful Shutdown Integration
 - [ ] Perform final sync on SIGTERM (integrate with PRD #19)
@@ -197,7 +211,7 @@ func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldown
 - [ ] Log any entries that couldn't be persisted
 
 ### Milestone 4: RBAC and Helm Chart Updates
-- [ ] Update ClusterRole with ConfigMap permissions
+- [x] Update ClusterRole with ConfigMap permissions
 - [ ] Add persistence configuration to Helm values
 - [ ] Update Helm templates for new flags
 
@@ -261,6 +275,7 @@ Accept state loss on restart.
 | Date | Update |
 |------|--------|
 | 2025-12-03 | PRD created based on @barth12 feedback in issue #16 |
+| 2025-12-15 | Milestone 1 & 2 complete. Design changed to per-CR ConfigMaps (ownerReferences for auto-cleanup). Created `persistence.go`, integrated with controller, added flags. RBAC updated. Milestone 3 blocked by PRD #19. |
 
 ---
 

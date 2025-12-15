@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Repository Info
+
+- **GitHub Organization**: `vfarcic`
+- **Repository**: `vfarcic/dot-ai-controller`
+
 ## Project Overview
 
 DevOps AI Toolkit Controller - A Kubernetes controller built with Kubebuilder v4.7.1. The controller provides two main capabilities:
