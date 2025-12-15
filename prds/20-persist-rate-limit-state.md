@@ -1,7 +1,7 @@
 # PRD: Persist Rate Limit State Across Pod Restarts
 
 **Issue**: [#20](https://github.com/vfarcic/dot-ai-controller/issues/20)
-**Status**: In Progress
+**Status**: Complete
 **Priority**: High
 **Created**: 2025-12-03
 
@@ -242,7 +242,7 @@ func (p *CooldownPersistence) Stop()
 - [x] Unit tests for CooldownPersistence
 - [x] Integration tests for state restoration
 - [x] E2E test for persistence across restart
-- [ ] Update documentation with persistence configuration
+- [x] Update documentation with persistence configuration
 
 ## Risks & Mitigations
 
@@ -303,6 +303,7 @@ Accept state loss on restart.
 | 2025-12-15 | Milestone 3 complete. Added shutdown sync: `Stop()` method now uses stored `getCooldowns` callback, creates fresh context with 30s timeout, called from `main.go` after manager exits. |
 | 2025-12-15 | **Design simplification**: Removed controller-level flags (`--cooldown-persistence-enabled`, `--cooldown-sync-interval`, `--cooldown-min-persist-duration`). Added per-CR `spec.persistence.enabled` field (default: true). Hardcoded sensible defaults (60s sync, 1h min duration). Updated CRD, persistence.go, controller, Helm chart CRD, and manager-role.yaml. Milestone 4 complete. |
 | 2025-12-15 | **Milestone 5 testing complete**: Added comprehensive unit tests in `persistence_test.go` (helper functions, MarkDirty, Load/Sync integration, lifecycle). Added two e2e tests demonstrating persistence behavior. Fixed critical bug: `Load()` was called before cache ready - changed to use `manager.RunnableFunc` with `WaitForCacheSync()`. Fixed key format mismatch (4 parts vs 5). Added env var support (`COOLDOWN_SYNC_INTERVAL`, `COOLDOWN_MIN_PERSIST_DURATION`) for test configuration. All 15 e2e tests passing. |
+| 2025-12-16 | **PRD Complete**: Added persistence documentation to `docs/remediation-guide.md` under "Other Settings" section. All milestones complete. |
 
 ---
 

@@ -426,12 +426,15 @@ eventSelectors:
     maxRiskLevel: medium             # Allow medium-risk actions
 ```
 
-### Rate Limiting
+### Other Settings
 
 ```yaml
 rateLimiting:
   eventsPerMinute: 10                # Maximum events processed per minute
   cooldownMinutes: 5                 # Wait time after processing an event
+
+persistence:
+  enabled: true                      # Persist cooldown state across restarts (default: true)
 ```
 
 ### Notifications
