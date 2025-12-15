@@ -50,11 +50,6 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
-
-	// Cooldown persistence flags
-	var cooldownPersistenceEnabled bool
-	var cooldownSyncInterval time.Duration
-	var cooldownMinPersistDuration time.Duration
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -72,14 +67,6 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-
-	// Cooldown persistence flags
-	flag.BoolVar(&cooldownPersistenceEnabled, "cooldown-persistence-enabled", true,
-		"Enable persistence of cooldown state to ConfigMaps to survive pod restarts")
-	flag.DurationVar(&cooldownSyncInterval, "cooldown-sync-interval", 60*time.Second,
-		"How often to sync cooldown state to ConfigMaps")
-	flag.DurationVar(&cooldownMinPersistDuration, "cooldown-min-persist-duration", 1*time.Hour,
-		"Only persist cooldowns with remaining duration greater than this value")
 
 	opts := zap.Options{
 		Development: true,
@@ -215,14 +202,10 @@ func main() {
 	}
 
 	// Create cooldown persistence for surviving pod restarts
+	// Persistence is enabled by default; individual policies can opt out via spec.persistence.enabled=false
 	cooldownPersistence := controller.NewCooldownPersistence(
 		mgr.GetClient(),
 		mgr.GetScheme(),
-		controller.CooldownPersistenceConfig{
-			Enabled:      cooldownPersistenceEnabled,
-			SyncInterval: cooldownSyncInterval,
-			MinDuration:  cooldownMinPersistDuration,
-		},
 	)
 
 	if err := (&controller.RemediationPolicyReconciler{

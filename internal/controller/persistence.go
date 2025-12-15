@@ -45,12 +45,12 @@ const (
 // CooldownPersistence handles per-CR ConfigMap-based state persistence.
 // Each RemediationPolicy CR gets its own ConfigMap with ownerReference
 // for automatic cleanup when the CR is deleted.
+//
+// Persistence is enabled by default for all policies. Individual policies
+// can opt out by setting spec.persistence.enabled=false.
 type CooldownPersistence struct {
-	client       client.Client
-	scheme       *runtime.Scheme
-	syncInterval time.Duration
-	minDuration  time.Duration
-	enabled      bool
+	client client.Client
+	scheme *runtime.Scheme
 
 	mu           sync.RWMutex
 	dirtyEntries map[string]bool // Full keys that need sync
@@ -62,37 +62,15 @@ type CooldownPersistence struct {
 	doneCh chan struct{}
 }
 
-// CooldownPersistenceConfig holds configuration for CooldownPersistence
-type CooldownPersistenceConfig struct {
-	Enabled      bool
-	SyncInterval time.Duration
-	MinDuration  time.Duration
-}
-
 // NewCooldownPersistence creates a new CooldownPersistence instance
-func NewCooldownPersistence(c client.Client, scheme *runtime.Scheme, config CooldownPersistenceConfig) *CooldownPersistence {
-	if config.SyncInterval == 0 {
-		config.SyncInterval = DefaultCooldownSyncInterval
-	}
-	if config.MinDuration == 0 {
-		config.MinDuration = DefaultMinPersistDuration
-	}
-
+func NewCooldownPersistence(c client.Client, scheme *runtime.Scheme) *CooldownPersistence {
 	return &CooldownPersistence{
 		client:       c,
 		scheme:       scheme,
-		syncInterval: config.SyncInterval,
-		minDuration:  config.MinDuration,
-		enabled:      config.Enabled,
 		dirtyEntries: make(map[string]bool),
 		stopCh:       make(chan struct{}),
 		doneCh:       make(chan struct{}),
 	}
-}
-
-// IsEnabled returns whether persistence is enabled
-func (p *CooldownPersistence) IsEnabled() bool {
-	return p.enabled
 }
 
 // getConfigMapName returns the ConfigMap name for a policy
@@ -116,15 +94,23 @@ func makeFullKey(policyNs, policyName, shortKey string) string {
 	return fmt.Sprintf("%s/%s/%s", policyNs, policyName, shortKey)
 }
 
+// IsPolicyPersistenceEnabled checks if persistence is enabled for a policy.
+// Returns true if persistence is not explicitly disabled (default is enabled).
+func IsPolicyPersistenceEnabled(policy *dotaiv1alpha1.RemediationPolicy) bool {
+	if policy.Spec.Persistence == nil {
+		return true // Default: enabled
+	}
+	if policy.Spec.Persistence.Enabled == nil {
+		return true // Default: enabled
+	}
+	return *policy.Spec.Persistence.Enabled
+}
+
 // Load restores cooldown state from all RemediationPolicy ConfigMaps.
+// Only loads state for policies that have persistence enabled.
 // Returns a map with full keys (policy-ns/policy-name/obj-ns/obj-name/reason).
 func (p *CooldownPersistence) Load(ctx context.Context) map[string]time.Time {
 	logger := logf.FromContext(ctx).WithName("cooldown-persistence")
-
-	if !p.enabled {
-		logger.V(1).Info("Cooldown persistence disabled, skipping load")
-		return make(map[string]time.Time)
-	}
 
 	// List all RemediationPolicies
 	var policies dotaiv1alpha1.RemediationPolicyList
@@ -137,8 +123,13 @@ func (p *CooldownPersistence) Load(ctx context.Context) map[string]time.Time {
 	now := time.Now()
 	totalLoaded := 0
 	totalPruned := 0
+	skippedPolicies := 0
 
 	for _, policy := range policies.Items {
+		if !IsPolicyPersistenceEnabled(&policy) {
+			skippedPolicies++
+			continue
+		}
 		loaded, pruned := p.loadPolicyState(ctx, &policy, cooldowns, now)
 		totalLoaded += loaded
 		totalPruned += pruned
@@ -146,6 +137,7 @@ func (p *CooldownPersistence) Load(ctx context.Context) map[string]time.Time {
 
 	logger.Info("Loaded cooldown state from ConfigMaps",
 		"policies", len(policies.Items),
+		"skipped", skippedPolicies,
 		"loaded", totalLoaded,
 		"pruned", totalPruned)
 
@@ -214,13 +206,10 @@ func (p *CooldownPersistence) loadPolicyState(ctx context.Context, policy *dotai
 }
 
 // MarkDirty flags a cooldown entry for persistence on the next sync.
+// The caller (controller) should check IsPolicyPersistenceEnabled before calling this.
 func (p *CooldownPersistence) MarkDirty(fullKey string, cooldownEnd time.Time) {
-	if !p.enabled {
-		return
-	}
-
 	// Only persist cooldowns with sufficient remaining duration
-	if time.Until(cooldownEnd) < p.minDuration {
+	if time.Until(cooldownEnd) < DefaultMinPersistDuration {
 		return
 	}
 
@@ -230,12 +219,9 @@ func (p *CooldownPersistence) MarkDirty(fullKey string, cooldownEnd time.Time) {
 }
 
 // Sync writes dirty cooldown entries to per-policy ConfigMaps.
+// Only syncs policies that have persistence enabled.
 func (p *CooldownPersistence) Sync(ctx context.Context, cooldowns map[string]time.Time) error {
 	logger := logf.FromContext(ctx).WithName("cooldown-persistence")
-
-	if !p.enabled {
-		return nil
-	}
 
 	p.mu.RLock()
 	hasDirty := len(p.dirtyEntries) > 0
@@ -256,7 +242,7 @@ func (p *CooldownPersistence) Sync(ctx context.Context, cooldowns map[string]tim
 			continue
 		}
 		// Only persist long cooldowns
-		if cooldownEnd.Sub(now) < p.minDuration {
+		if cooldownEnd.Sub(now) < DefaultMinPersistDuration {
 			continue
 		}
 
@@ -304,7 +290,7 @@ func (p *CooldownPersistence) Sync(ctx context.Context, cooldowns map[string]tim
 func (p *CooldownPersistence) syncPolicyConfigMap(ctx context.Context, policyNs, policyName string, entries map[string]time.Time, now time.Time) error {
 	logger := logf.FromContext(ctx).WithName("cooldown-persistence")
 
-	// Get the policy for ownerReference
+	// Get the policy for ownerReference and persistence check
 	policy := &dotaiv1alpha1.RemediationPolicy{}
 	if err := p.client.Get(ctx, client.ObjectKey{Namespace: policyNs, Name: policyName}, policy); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -312,6 +298,14 @@ func (p *CooldownPersistence) syncPolicyConfigMap(ctx context.Context, policyNs,
 			return nil
 		}
 		return fmt.Errorf("failed to get policy %s/%s: %w", policyNs, policyName, err)
+	}
+
+	// Skip if persistence is disabled for this policy
+	if !IsPolicyPersistenceEnabled(policy) {
+		logger.V(1).Info("Persistence disabled for policy, skipping sync",
+			"policy", policyName,
+			"namespace", policyNs)
+		return nil
 	}
 
 	// Convert to JSON-serializable format
@@ -400,20 +394,14 @@ func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldown
 	// Store callback for use during Stop
 	p.getCooldowns = getCooldowns
 
-	if !p.enabled {
-		logger.Info("Cooldown persistence disabled, not starting periodic sync")
-		close(p.doneCh)
-		return
-	}
-
 	logger.Info("Starting periodic cooldown sync",
-		"interval", p.syncInterval,
-		"minDuration", p.minDuration)
+		"interval", DefaultCooldownSyncInterval,
+		"minDuration", DefaultMinPersistDuration)
 
 	go func() {
 		defer close(p.doneCh)
 
-		ticker := time.NewTicker(p.syncInterval)
+		ticker := time.NewTicker(DefaultCooldownSyncInterval)
 		defer ticker.Stop()
 
 		for {
@@ -436,10 +424,6 @@ func (p *CooldownPersistence) StartPeriodicSync(ctx context.Context, getCooldown
 // Creates a fresh context with timeout since the manager context may be cancelled.
 func (p *CooldownPersistence) Stop() {
 	logger := logf.Log.WithName("cooldown-persistence")
-
-	if !p.enabled {
-		return
-	}
 
 	logger.Info("Stopping cooldown persistence, performing final sync")
 

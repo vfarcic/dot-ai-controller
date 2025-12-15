@@ -746,8 +746,8 @@ func (r *RemediationPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Record startup time to filter out historical events on restart
 	r.startupTime = time.Now()
 
-	// Load persisted cooldown state if persistence is enabled
-	if r.CooldownPersistence != nil && r.CooldownPersistence.IsEnabled() {
+	// Load persisted cooldown state
+	if r.CooldownPersistence != nil {
 		ctx := context.Background()
 		logger := logf.FromContext(ctx).WithName("setup")
 

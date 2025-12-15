@@ -147,6 +147,15 @@ type NotificationConfig struct {
 	GoogleChat GoogleChatConfig `json:"googleChat,omitempty"`
 }
 
+// PersistenceConfig defines cooldown state persistence settings
+type PersistenceConfig struct {
+	// Enable cooldown state persistence for this policy
+	// When enabled, cooldown state survives pod restarts via ConfigMap storage
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
 // RemediationPolicySpec defines the desired state of RemediationPolicy
 type RemediationPolicySpec struct {
 	// Event selection criteria
@@ -194,6 +203,11 @@ type RemediationPolicySpec struct {
 	// Notification configuration
 	// +optional
 	Notifications NotificationConfig `json:"notifications,omitempty"`
+
+	// Persistence configuration for cooldown state
+	// When not specified, persistence is enabled by default
+	// +optional
+	Persistence *PersistenceConfig `json:"persistence,omitempty"`
 }
 
 // McpRequest represents the JSON request structure sent to the MCP remediate tool
