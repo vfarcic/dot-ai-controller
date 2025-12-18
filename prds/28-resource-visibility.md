@@ -804,11 +804,16 @@ resourceSync:
   - **Added**: `resourcesync_debounce.go` - Debounce buffer with configurable window, metrics tracking
   - **Added**: Safe channel closure handling to prevent panics during shutdown
 
-- [ ] **M4: Initial sync and periodic resync**
+- [x] **M4: Initial sync and periodic resync**
   - Initial sync on startup (list all resources, send to MCP)
   - Periodic resync every hour (default, configurable)
   - Controller sends full state; MCP diffs against Qdrant
   - MCP: insert new, update changed, delete missing (catches missed deletes)
+  - **Added**: `listAllResources()` iterates all informer caches and extracts ResourceData
+  - **Added**: `performResync()` sends all resources to MCP with `isResync: true`
+  - **Added**: `performInitialSync()` runs after cache sync completes, updates status
+  - **Added**: `periodicResyncLoop()` goroutine with configurable interval from `ResyncIntervalMinutes`
+  - **Added**: Status updates for `LastResyncTime`, `TotalResourcesSynced`, `SyncErrors`
 
 - [ ] **M5: Configuration and Helm chart**
   - Add resourceSync configuration to Helm values
@@ -920,6 +925,7 @@ resourceSync:
 | 2025-12-18 | **M2 Complete**: Event handlers and change detection. Implemented `makeOnAdd`, `makeOnUpdate`, `makeOnDelete` handlers with `hasRelevantChanges()` for filtering. Added `ResourceData`/`ResourceChange` types, buffered change queue (10K), and resource ID format `namespace:apiVersion:kind:name`. Comprehensive unit tests added (75.8% coverage). |
 | 2025-12-18 | **API Contract Defined**: Documented `POST /api/v1/resources/sync` endpoint contract aligned with MCP's `RestApiResponse` pattern. Ready for M3 implementation (controller side) and M7 implementation (MCP side). |
 | 2025-12-18 | **M3 Complete**: Debounce buffer and MCP client. Created `resourcesync_mcp.go` (MCP client with retry logic, request/response types) and `resourcesync_debounce.go` (debounce buffer with configurable window, last-state-wins, metrics). Integrated with controller startup. Safe channel closure handling. Unit tests added (77.5% coverage). |
+| 2025-12-18 | **M4 Complete**: Initial sync and periodic resync. Added `listAllResources()` to iterate informer caches, `performResync()` to send full state to MCP, `performInitialSync()` for startup sync after cache sync, and `periodicResyncLoop()` goroutine for configurable periodic resyncs. Status updates include `LastResyncTime`, `TotalResourcesSynced`, `SyncErrors`. Unit tests added with mock informers (74.8% coverage). |
 
 ---
 

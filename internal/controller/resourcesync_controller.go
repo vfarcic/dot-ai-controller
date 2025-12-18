@@ -358,11 +358,26 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 		logger.Info("Debounce buffer stopped", "config", config.Name)
 	}()
 
-	// Wait for cache sync in background
+	// Wait for cache sync, then perform initial sync and start periodic resync
 	go func() {
 		logger.Info("Waiting for informer caches to sync", "config", config.Name)
 		informerFactory.WaitForCacheSync(state.stopCh)
 		logger.Info("Informer caches synced", "config", config.Name)
+
+		// Check if context is still valid
+		select {
+		case <-watcherCtx.Done():
+			logger.Info("Context cancelled, skipping initial sync", "config", config.Name)
+			return
+		default:
+		}
+
+		// Perform initial sync
+		r.performInitialSync(watcherCtx, state, config.Name)
+
+		// Start periodic resync loop
+		resyncInterval := time.Duration(config.GetResyncInterval()) * time.Minute
+		go r.periodicResyncLoop(watcherCtx, state, config.Name, resyncInterval)
 	}()
 
 	// Update status
@@ -964,6 +979,213 @@ func (r *ResourceSyncReconciler) updateStatus(ctx context.Context, config *dotai
 	// Update status subresource
 	if err := r.Status().Update(ctx, fresh); err != nil {
 		logger.Error(err, "Failed to update ResourceSyncConfig status")
+	}
+}
+
+// Resync functions
+
+// listAllResources iterates over all active informers and extracts ResourceData from cached resources
+func (r *ResourceSyncReconciler) listAllResources(state *activeConfigState) []*ResourceData {
+	logger := logf.Log.WithName("resourcesync")
+
+	state.informersMu.RLock()
+	informers := make(map[schema.GroupVersionResource]cache.SharedIndexInformer, len(state.activeInformers))
+	for gvr, informer := range state.activeInformers {
+		informers[gvr] = informer
+	}
+	state.informersMu.RUnlock()
+
+	var allResources []*ResourceData
+
+	for gvr, informer := range informers {
+		// Skip CRD informer - we don't sync CRDs themselves
+		if gvr == crdGVR {
+			continue
+		}
+
+		// Get all items from the informer's cache
+		items := informer.GetStore().List()
+		logger.V(2).Info("Listing resources from informer",
+			"gvr", gvr.String(),
+			"count", len(items),
+		)
+
+		for _, item := range items {
+			u, ok := item.(*unstructured.Unstructured)
+			if !ok {
+				logger.V(2).Info("Skipping non-unstructured item",
+					"gvr", gvr.String(),
+					"type", fmt.Sprintf("%T", item),
+				)
+				continue
+			}
+
+			data := extractResourceData(u)
+			allResources = append(allResources, data)
+		}
+	}
+
+	logger.Info("Listed all resources from informer caches",
+		"totalResources", len(allResources),
+		"informerCount", len(informers)-1, // -1 for CRD informer
+	)
+
+	return allResources
+}
+
+// performResync sends all current resources to MCP for reconciliation
+// MCP will diff against Qdrant and handle any drift (insert new, update changed, delete missing)
+func (r *ResourceSyncReconciler) performResync(ctx context.Context, state *activeConfigState) error {
+	logger := logf.FromContext(ctx).WithName("resourcesync")
+
+	if state.mcpClient == nil {
+		logger.V(1).Info("MCP client not configured, skipping resync")
+		return nil
+	}
+
+	// List all resources from informer caches
+	allResources := r.listAllResources(state)
+
+	if len(allResources) == 0 {
+		logger.Info("No resources to resync")
+		return nil
+	}
+
+	logger.Info("Performing resync with MCP",
+		"resourceCount", len(allResources),
+	)
+
+	// Send to MCP with IsResync flag
+	resp, err := state.mcpClient.Resync(ctx, allResources)
+	if err != nil {
+		logger.Error(err, "Failed to resync resources to MCP")
+		return fmt.Errorf("resync failed: %w", err)
+	}
+
+	if !resp.Success {
+		errMsg := resp.GetErrorMessage()
+		logger.Error(nil, "MCP resync returned error",
+			"error", errMsg,
+			"failures", resp.GetFailures(),
+		)
+		return fmt.Errorf("MCP resync error: %s", errMsg)
+	}
+
+	upserted, deleted := resp.GetSuccessCounts()
+	logger.Info("Resync completed successfully",
+		"upserted", upserted,
+		"deleted", deleted,
+	)
+
+	return nil
+}
+
+// performInitialSync performs the initial sync after informer caches are synced
+// This ensures all existing resources are sent to MCP on startup
+func (r *ResourceSyncReconciler) performInitialSync(ctx context.Context, state *activeConfigState, configName string) {
+	logger := logf.FromContext(ctx).WithName("resourcesync")
+
+	logger.Info("Performing initial sync", "config", configName)
+
+	err := r.performResync(ctx, state)
+
+	// Update status
+	r.configsMu.RLock()
+	currentState, exists := r.activeConfigs[configName]
+	r.configsMu.RUnlock()
+
+	if !exists || currentState != state {
+		logger.Info("Config no longer active, skipping status update", "config", configName)
+		return
+	}
+
+	// Fetch fresh config for status update
+	var config dotaiv1alpha1.ResourceSyncConfig
+	if getErr := r.Get(ctx, client.ObjectKey{Name: configName}, &config); getErr != nil {
+		logger.Error(getErr, "Failed to fetch ResourceSyncConfig for status update")
+		return
+	}
+
+	now := metav1.NewTime(time.Now())
+	config.Status.LastResyncTime = &now
+
+	if err != nil {
+		config.Status.SyncErrors++
+		config.Status.LastError = err.Error()
+		logger.Error(err, "Initial sync failed", "config", configName)
+	} else {
+		config.Status.LastError = ""
+		// Update total synced count from informer cache size
+		allResources := r.listAllResources(state)
+		config.Status.TotalResourcesSynced = int64(len(allResources))
+		logger.Info("Initial sync completed", "config", configName, "resourceCount", len(allResources))
+	}
+
+	if statusErr := r.Status().Update(ctx, &config); statusErr != nil {
+		logger.Error(statusErr, "Failed to update status after initial sync")
+	}
+}
+
+// periodicResyncLoop runs periodic resyncs at the configured interval
+func (r *ResourceSyncReconciler) periodicResyncLoop(ctx context.Context, state *activeConfigState, configName string, interval time.Duration) {
+	logger := logf.FromContext(ctx).WithName("resourcesync")
+
+	logger.Info("Starting periodic resync loop",
+		"config", configName,
+		"interval", interval,
+	)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("Periodic resync loop stopping", "config", configName)
+			return
+
+		case <-ticker.C:
+			// Check if this config is still active
+			r.configsMu.RLock()
+			currentState, exists := r.activeConfigs[configName]
+			r.configsMu.RUnlock()
+
+			if !exists || currentState != state {
+				logger.Info("Config no longer active, stopping resync loop", "config", configName)
+				return
+			}
+
+			logger.Info("Starting periodic resync", "config", configName)
+
+			err := r.performResync(ctx, state)
+
+			// Update status
+			var config dotaiv1alpha1.ResourceSyncConfig
+			if getErr := r.Get(ctx, client.ObjectKey{Name: configName}, &config); getErr != nil {
+				logger.Error(getErr, "Failed to fetch ResourceSyncConfig for status update")
+				continue
+			}
+
+			now := metav1.NewTime(time.Now())
+			config.Status.LastResyncTime = &now
+			config.Status.LastSyncTime = &now
+
+			if err != nil {
+				config.Status.SyncErrors++
+				config.Status.LastError = err.Error()
+				logger.Error(err, "Periodic resync failed", "config", configName)
+			} else {
+				config.Status.LastError = ""
+				// Update total synced count
+				allResources := r.listAllResources(state)
+				config.Status.TotalResourcesSynced = int64(len(allResources))
+				logger.Info("Periodic resync completed", "config", configName, "resourceCount", len(allResources))
+			}
+
+			if statusErr := r.Status().Update(ctx, &config); statusErr != nil {
+				logger.Error(statusErr, "Failed to update status after periodic resync")
+			}
+		}
 	}
 }
 

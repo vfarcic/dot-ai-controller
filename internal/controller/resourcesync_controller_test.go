@@ -1673,7 +1673,264 @@ var _ = Describe("ResourceSync Controller", func() {
 			})
 		})
 	})
+
+	Describe("Resync Functions", func() {
+		Describe("listAllResources", func() {
+			It("should return empty slice when no informers exist", func() {
+				state := &activeConfigState{
+					activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
+				}
+
+				resources := reconciler.listAllResources(state)
+				Expect(resources).To(BeEmpty())
+			})
+
+			It("should skip CRD informer", func() {
+				// Create a mock informer with a CRD
+				mockStore := &mockStore{
+					items: []interface{}{
+						&unstructured.Unstructured{
+							Object: map[string]interface{}{
+								"apiVersion": "apiextensions.k8s.io/v1",
+								"kind":       "CustomResourceDefinition",
+								"metadata": map[string]interface{}{
+									"name": "test.example.com",
+								},
+							},
+						},
+					},
+				}
+				mockInformer := &mockInformer{store: mockStore}
+
+				state := &activeConfigState{
+					activeInformers: map[schema.GroupVersionResource]cache.SharedIndexInformer{
+						crdGVR: mockInformer,
+					},
+				}
+
+				resources := reconciler.listAllResources(state)
+				Expect(resources).To(BeEmpty())
+			})
+
+			It("should extract resources from informers", func() {
+				// Create mock store with test resources
+				mockStore := &mockStore{
+					items: []interface{}{
+						&unstructured.Unstructured{
+							Object: map[string]interface{}{
+								"apiVersion": "apps/v1",
+								"kind":       "Deployment",
+								"metadata": map[string]interface{}{
+									"name":      "nginx",
+									"namespace": "default",
+								},
+								"status": map[string]interface{}{
+									"readyReplicas": int64(3),
+								},
+							},
+						},
+						&unstructured.Unstructured{
+							Object: map[string]interface{}{
+								"apiVersion": "apps/v1",
+								"kind":       "Deployment",
+								"metadata": map[string]interface{}{
+									"name":      "redis",
+									"namespace": "default",
+								},
+								"status": map[string]interface{}{
+									"readyReplicas": int64(1),
+								},
+							},
+						},
+					},
+				}
+				mockInformer := &mockInformer{store: mockStore}
+
+				deploymentsGVR := schema.GroupVersionResource{
+					Group:    "apps",
+					Version:  "v1",
+					Resource: "deployments",
+				}
+
+				state := &activeConfigState{
+					activeInformers: map[schema.GroupVersionResource]cache.SharedIndexInformer{
+						deploymentsGVR: mockInformer,
+					},
+				}
+
+				resources := reconciler.listAllResources(state)
+				Expect(resources).To(HaveLen(2))
+
+				// Verify extracted data
+				names := []string{}
+				for _, r := range resources {
+					names = append(names, r.Name)
+					Expect(r.Kind).To(Equal("Deployment"))
+					Expect(r.APIVersion).To(Equal("apps/v1"))
+					Expect(r.Namespace).To(Equal("default"))
+				}
+				Expect(names).To(ContainElements("nginx", "redis"))
+			})
+
+			It("should aggregate resources from multiple informers", func() {
+				// Deployments store
+				deploymentsStore := &mockStore{
+					items: []interface{}{
+						&unstructured.Unstructured{
+							Object: map[string]interface{}{
+								"apiVersion": "apps/v1",
+								"kind":       "Deployment",
+								"metadata": map[string]interface{}{
+									"name":      "nginx",
+									"namespace": "default",
+								},
+							},
+						},
+					},
+				}
+
+				// Pods store
+				podsStore := &mockStore{
+					items: []interface{}{
+						&unstructured.Unstructured{
+							Object: map[string]interface{}{
+								"apiVersion": "v1",
+								"kind":       "Pod",
+								"metadata": map[string]interface{}{
+									"name":      "nginx-abc123",
+									"namespace": "default",
+								},
+							},
+						},
+						&unstructured.Unstructured{
+							Object: map[string]interface{}{
+								"apiVersion": "v1",
+								"kind":       "Pod",
+								"metadata": map[string]interface{}{
+									"name":      "nginx-def456",
+									"namespace": "default",
+								},
+							},
+						},
+					},
+				}
+
+				state := &activeConfigState{
+					activeInformers: map[schema.GroupVersionResource]cache.SharedIndexInformer{
+						{Group: "apps", Version: "v1", Resource: "deployments"}: &mockInformer{store: deploymentsStore},
+						{Group: "", Version: "v1", Resource: "pods"}:            &mockInformer{store: podsStore},
+					},
+				}
+
+				resources := reconciler.listAllResources(state)
+				Expect(resources).To(HaveLen(3))
+
+				// Count by kind
+				kinds := make(map[string]int)
+				for _, r := range resources {
+					kinds[r.Kind]++
+				}
+				Expect(kinds["Deployment"]).To(Equal(1))
+				Expect(kinds["Pod"]).To(Equal(2))
+			})
+		})
+
+		Describe("performResync", func() {
+			It("should skip resync when MCP client is nil", func() {
+				state := &activeConfigState{
+					mcpClient:       nil,
+					activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
+				}
+
+				err := reconciler.performResync(testCtx, state)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should skip resync when no resources exist", func() {
+				state := &activeConfigState{
+					mcpClient: &MCPResourceSyncClient{
+						endpoint: "http://test.example.com",
+					},
+					activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
+				}
+
+				err := reconciler.performResync(testCtx, state)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+	})
 })
+
+// Mock implementations for testing
+
+// mockStore implements cache.Store for testing
+type mockStore struct {
+	items []interface{}
+}
+
+func (s *mockStore) Add(obj interface{}) error    { return nil }
+func (s *mockStore) Update(obj interface{}) error { return nil }
+func (s *mockStore) Delete(obj interface{}) error { return nil }
+func (s *mockStore) List() []interface{}          { return s.items }
+func (s *mockStore) ListKeys() []string           { return nil }
+func (s *mockStore) Get(obj interface{}) (item interface{}, exists bool, err error) {
+	return nil, false, nil
+}
+func (s *mockStore) GetByKey(key string) (item interface{}, exists bool, err error) {
+	return nil, false, nil
+}
+func (s *mockStore) Replace([]interface{}, string) error { return nil }
+func (s *mockStore) Resync() error                       { return nil }
+
+// mockInformer implements cache.SharedIndexInformer for testing
+type mockInformer struct {
+	store cache.Store
+}
+
+func (m *mockInformer) AddEventHandler(handler cache.ResourceEventHandler) (cache.ResourceEventHandlerRegistration, error) {
+	return nil, nil
+}
+func (m *mockInformer) AddEventHandlerWithResyncPeriod(handler cache.ResourceEventHandler, resyncPeriod time.Duration) (cache.ResourceEventHandlerRegistration, error) {
+	return nil, nil
+}
+func (m *mockInformer) AddEventHandlerWithOptions(handler cache.ResourceEventHandler, options cache.HandlerOptions) (cache.ResourceEventHandlerRegistration, error) {
+	return nil, nil
+}
+func (m *mockInformer) RemoveEventHandler(handle cache.ResourceEventHandlerRegistration) error {
+	return nil
+}
+func (m *mockInformer) GetStore() cache.Store {
+	return m.store
+}
+func (m *mockInformer) GetController() cache.Controller {
+	return nil
+}
+func (m *mockInformer) Run(stopCh <-chan struct{})         {}
+func (m *mockInformer) RunWithContext(ctx context.Context) {}
+func (m *mockInformer) HasSynced() bool {
+	return true
+}
+func (m *mockInformer) LastSyncResourceVersion() string {
+	return ""
+}
+func (m *mockInformer) SetWatchErrorHandler(handler cache.WatchErrorHandler) error {
+	return nil
+}
+func (m *mockInformer) SetWatchErrorHandlerWithContext(handler cache.WatchErrorHandlerWithContext) error {
+	return nil
+}
+func (m *mockInformer) SetTransform(handler cache.TransformFunc) error {
+	return nil
+}
+func (m *mockInformer) IsStopped() bool {
+	return false
+}
+func (m *mockInformer) AddIndexers(indexers cache.Indexers) error {
+	return nil
+}
+func (m *mockInformer) GetIndexer() cache.Indexer {
+	return nil
+}
 
 // Helper function to generate random strings for unique test names
 func randString(n int) string {
