@@ -655,7 +655,92 @@ func (c *MCPClient) Resync(ctx context.Context, allResources []*ResourceData) er
 
 > **Design Decision**: Controller sends resource data to MCP via HTTP. MCP handles embeddings, diffing (for resync), and Qdrant writes. This keeps the controller simple and consistent with how capabilities work. MCP ignores "not found" errors on delete (idempotent).
 
-#### 6. Configuration (Adapt Existing Pattern)
+#### 6. API Contract: Resource Sync Endpoint
+
+**Endpoint**: `POST /api/v1/resources/sync`
+
+**Request Body**:
+```json
+{
+  "upserts": [
+    {
+      "id": "default:apps/v1:Deployment:nginx",
+      "namespace": "default",
+      "name": "nginx",
+      "kind": "Deployment",
+      "apiVersion": "apps/v1",
+      "labels": {"app": "nginx", "env": "prod"},
+      "annotations": {"description": "Web server"},
+      "status": {
+        "availableReplicas": 3,
+        "readyReplicas": 3,
+        "conditions": [
+          {
+            "type": "Available",
+            "status": "True",
+            "lastTransitionTime": "2025-12-18T10:00:00Z",
+            "reason": "MinimumReplicasAvailable",
+            "message": "Deployment has minimum availability."
+          }
+        ]
+      },
+      "createdAt": "2025-12-13T10:00:00Z",
+      "updatedAt": "2025-12-18T14:30:00Z"
+    }
+  ],
+  "deletes": ["default:apps/v1:Deployment:old-nginx"],
+  "isResync": false
+}
+```
+
+**Response Body** (follows MCP's `RestApiResponse` pattern):
+
+Success:
+```json
+{
+  "success": true,
+  "data": {
+    "upserted": 5,
+    "deleted": 2
+  },
+  "meta": {
+    "timestamp": "2025-12-18T14:30:00Z",
+    "requestId": "abc-123",
+    "version": "1.0.0"
+  }
+}
+```
+
+Error (partial or complete failure):
+```json
+{
+  "success": false,
+  "error": {
+    "code": "SYNC_FAILED",
+    "message": "Failed to process some resources",
+    "details": {
+      "upserted": 4,
+      "deleted": 2,
+      "failures": [
+        {"id": "default:apps/v1:Deployment:nginx", "error": "embedding failed"}
+      ]
+    }
+  },
+  "meta": {
+    "timestamp": "2025-12-18T14:30:00Z",
+    "requestId": "abc-123",
+    "version": "1.0.0"
+  }
+}
+```
+
+**Key Design Decisions**:
+- **ID format**: `namespace:apiVersion:kind:name` - colons avoid URL path conflicts
+- **Response wrapper**: Follows MCP's standard `RestApiResponse` pattern for consistency
+- **Partial failures**: Reported in `error.details` with `success: false`
+- **Idempotent deletes**: MCP ignores "not found" errors silently
+
+#### 7. Configuration (Adapt Existing Pattern)
 
 ```yaml
 # Helm values - similar to existing MCP endpoint config
@@ -709,12 +794,15 @@ resourceSync:
   - **Added**: Resource ID format: `namespace:apiVersion:kind:name` (e.g., `default:apps/v1:Deployment:nginx`)
   - **Added**: Cluster-scoped resources use `_cluster` as namespace prefix
 
-- [ ] **M3: Debounce buffer and MCP client**
+- [x] **M3: Debounce buffer and MCP client**
   - Implement debounce buffer with 10-second window
   - Last-state-wins per resource ID
   - Deletes always preserved
   - HTTP client to send batched data to MCP
   - Retry logic with exponential backoff
+  - **Added**: `resourcesync_mcp.go` - MCP client with `SyncRequest`/`SyncResponse` types, retry with exponential backoff
+  - **Added**: `resourcesync_debounce.go` - Debounce buffer with configurable window, metrics tracking
+  - **Added**: Safe channel closure handling to prevent panics during shutdown
 
 - [ ] **M4: Initial sync and periodic resync**
   - Initial sync on startup (list all resources, send to MCP)
@@ -817,6 +905,7 @@ resourceSync:
 | **CR-based configuration** - New `ResourceSyncConfig` CRD (cluster-scoped) enables/configures resource syncing. Controller is dormant until CR exists. | Same pattern as RemediationPolicy. Dynamic enablement without restart. GitOps-friendly. Multiple configs supported. |
 | **CRD watching instead of polling** - Watch CRDs directly via informer for immediate detection of new/removed custom resources. | Immediate response (seconds vs 5 minutes). More efficient than polling. Simpler code (no periodic goroutine). |
 | **Shared SecretReference type** - Moved `SecretReference` to `common_types.go` for reuse across CRDs. | Avoids duplication. Consistent pattern across RemediationPolicy and ResourceSyncConfig. |
+| **API contract for resource sync** - `POST /api/v1/resources/sync` with `RestApiResponse` wrapper pattern. ID format `namespace:apiVersion:kind:name`. | Consistent with MCP's existing API patterns. Colons in ID avoid URL path conflicts. Partial failures reported in `error.details`. |
 
 ---
 
@@ -829,6 +918,8 @@ resourceSync:
 | 2025-12-18 | Implementation started - created feature branch `feature/prd-28-resource-visibility` |
 | 2025-12-18 | **M1 Complete**: Resource discovery and dynamic informers. Created `ResourceSyncConfig` CRD, `resourcesync_controller.go`, shared `common_types.go`. Improved design: CRD watching via informer instead of polling for immediate detection of new CRDs. |
 | 2025-12-18 | **M2 Complete**: Event handlers and change detection. Implemented `makeOnAdd`, `makeOnUpdate`, `makeOnDelete` handlers with `hasRelevantChanges()` for filtering. Added `ResourceData`/`ResourceChange` types, buffered change queue (10K), and resource ID format `namespace:apiVersion:kind:name`. Comprehensive unit tests added (75.8% coverage). |
+| 2025-12-18 | **API Contract Defined**: Documented `POST /api/v1/resources/sync` endpoint contract aligned with MCP's `RestApiResponse` pattern. Ready for M3 implementation (controller side) and M7 implementation (MCP side). |
+| 2025-12-18 | **M3 Complete**: Debounce buffer and MCP client. Created `resourcesync_mcp.go` (MCP client with retry logic, request/response types) and `resourcesync_debounce.go` (debounce buffer with configurable window, last-state-wins, metrics). Integrated with controller startup. Safe channel closure handling. Unit tests added (77.5% coverage). |
 
 ---
 

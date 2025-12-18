@@ -16,6 +16,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -111,6 +112,13 @@ type ResourceSyncReconciler struct {
 	Recorder   record.EventRecorder
 	RestConfig *rest.Config
 
+	// HttpClient for MCP communication
+	HttpClient *http.Client
+
+	// AuthSecretNamespace is the default namespace for auth secrets
+	// Since ResourceSyncConfig is cluster-scoped, we need a default namespace
+	AuthSecretNamespace string
+
 	// dynamicClient for fetching arbitrary resources
 	dynamicClient dynamic.Interface
 
@@ -134,6 +142,13 @@ type activeConfigState struct {
 	// changeQueue receives resource changes from informer event handlers
 	// Buffered to prevent blocking informers during bursts
 	changeQueue chan *ResourceChange
+	// changeQueueClosed indicates the changeQueue has been closed
+	changeQueueClosed bool
+	changeQueueMu     sync.RWMutex
+	// debounceBuffer collects and batches changes before sending to MCP
+	debounceBuffer *DebounceBuffer
+	// mcpClient handles communication with the MCP endpoint
+	mcpClient *MCPResourceSyncClient
 }
 
 // +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=resourcesyncconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -257,7 +272,7 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 	logger := logf.FromContext(ctx).WithName("resourcesync")
 
 	// Create a cancellable context for this watcher
-	_, cancel := context.WithCancel(context.Background())
+	watcherCtx, cancel := context.WithCancel(context.Background())
 
 	// Create informer factory
 	informerFactory := dynamicinformer.NewDynamicSharedInformerFactory(
@@ -265,13 +280,52 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 		30*time.Minute, // Cache resync period
 	)
 
+	// Create change queue
+	changeQueue := make(chan *ResourceChange, changeQueueBufferSize)
+
+	// Create MCP client if endpoint is configured
+	var mcpClient *MCPResourceSyncClient
+	if config.Spec.McpEndpoint != "" {
+		httpClient := r.HttpClient
+		if httpClient == nil {
+			httpClient = &http.Client{
+				Timeout: 60 * time.Second,
+			}
+		}
+
+		authSecretNamespace := r.AuthSecretNamespace
+		if authSecretNamespace == "" {
+			authSecretNamespace = "default"
+		}
+
+		mcpClient = NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
+			Endpoint:            config.Spec.McpEndpoint,
+			HTTPClient:          httpClient,
+			K8sClient:           r.Client,
+			AuthSecretRef:       config.Spec.McpAuthSecretRef,
+			AuthSecretNamespace: authSecretNamespace,
+		})
+		logger.Info("MCP client created", "endpoint", config.Spec.McpEndpoint)
+	} else {
+		logger.Info("MCP endpoint not configured, resource sync will be disabled")
+	}
+
+	// Create debounce buffer
+	debounceBuffer := NewDebounceBuffer(DebounceBufferConfig{
+		Window:      time.Duration(config.GetDebounceWindow()) * time.Second,
+		MCPClient:   mcpClient,
+		ChangeQueue: changeQueue,
+	})
+
 	state := &activeConfigState{
 		config:          config.DeepCopy(),
 		informerFactory: informerFactory,
 		activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
 		stopCh:          make(chan struct{}),
 		cancel:          cancel,
-		changeQueue:     make(chan *ResourceChange, changeQueueBufferSize),
+		changeQueue:     changeQueue,
+		debounceBuffer:  debounceBuffer,
+		mcpClient:       mcpClient,
 	}
 
 	// Discover existing resources and setup informers
@@ -296,6 +350,13 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 
 	// Start informers
 	informerFactory.Start(state.stopCh)
+
+	// Start debounce buffer in background
+	go func() {
+		logger.Info("Starting debounce buffer", "config", config.Name, "window", config.GetDebounceWindow())
+		debounceBuffer.Run(watcherCtx)
+		logger.Info("Debounce buffer stopped", "config", config.Name)
+	}()
 
 	// Wait for cache sync in background
 	go func() {
@@ -496,9 +557,18 @@ func (r *ResourceSyncReconciler) stopWatcher(name string) {
 		return
 	}
 
-	// Stop the watcher
-	close(state.stopCh)
+	// Mark change queue as closed first (before actually closing)
+	// This prevents event handlers from trying to send to closed channel
+	state.changeQueueMu.Lock()
+	state.changeQueueClosed = true
+	state.changeQueueMu.Unlock()
+
+	// Stop the watcher - cancel context first to stop debounce buffer
 	state.cancel()
+	// Close stopCh to stop informers
+	close(state.stopCh)
+	// Close change queue to signal debounce buffer to exit
+	close(state.changeQueue)
 	delete(r.activeConfigs, name)
 }
 
@@ -699,6 +769,26 @@ func hasRelevantChanges(oldObj, newObj *unstructured.Unstructured) bool {
 
 // Event handler factories
 
+// trySendChange attempts to send a change to the queue, returning false if queue is closed or full
+func trySendChange(state *activeConfigState, change *ResourceChange) bool {
+	// Check if queue is closed first
+	state.changeQueueMu.RLock()
+	closed := state.changeQueueClosed
+	state.changeQueueMu.RUnlock()
+
+	if closed {
+		return false
+	}
+
+	// Try to send (non-blocking)
+	select {
+	case state.changeQueue <- change:
+		return true
+	default:
+		return false
+	}
+}
+
 // makeOnAdd creates an OnAdd handler that queues new resources for syncing
 func (r *ResourceSyncReconciler) makeOnAdd(state *activeConfigState) func(obj interface{}) {
 	logger := logf.Log.WithName("resourcesync")
@@ -720,12 +810,11 @@ func (r *ResourceSyncReconciler) makeOnAdd(state *activeConfigState) func(obj in
 			ID:     data.ID,
 		}
 
-		select {
-		case state.changeQueue <- change:
+		if trySendChange(state, change) {
 			logger.V(2).Info("Queued resource add", "id", data.ID)
-		default:
-			// Queue is full - log and drop (debounce buffer in M3 will catch this on resync)
-			logger.V(1).Info("Change queue full, dropping add event", "id", data.ID)
+		} else {
+			// Queue is full or closed - log and drop (debounce buffer will catch this on resync)
+			logger.V(1).Info("Change queue full or closed, dropping add event", "id", data.ID)
 		}
 	}
 }
@@ -763,12 +852,11 @@ func (r *ResourceSyncReconciler) makeOnUpdate(state *activeConfigState) func(old
 			ID:     data.ID,
 		}
 
-		select {
-		case state.changeQueue <- change:
+		if trySendChange(state, change) {
 			logger.V(2).Info("Queued resource update", "id", data.ID)
-		default:
-			// Queue is full - log and drop
-			logger.V(1).Info("Change queue full, dropping update event", "id", data.ID)
+		} else {
+			// Queue is full or closed - log and drop
+			logger.V(1).Info("Change queue full or closed, dropping update event", "id", data.ID)
 		}
 	}
 }
@@ -807,12 +895,11 @@ func (r *ResourceSyncReconciler) makeOnDelete(state *activeConfigState) func(obj
 			ID:     id,
 		}
 
-		select {
-		case state.changeQueue <- change:
+		if trySendChange(state, change) {
 			logger.V(2).Info("Queued resource delete", "id", id)
-		default:
-			// Queue is full - log and drop (resync will catch orphaned records)
-			logger.V(1).Info("Change queue full, dropping delete event", "id", id)
+		} else {
+			// Queue is full or closed - log and drop (resync will catch orphaned records)
+			logger.V(1).Info("Change queue full or closed, dropping delete event", "id", id)
 		}
 	}
 }
