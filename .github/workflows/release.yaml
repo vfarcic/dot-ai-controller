@@ -164,3 +164,11 @@ jobs:
         generate_release_notes: true
         files: |
           dot-ai-controller-${{ steps.version.outputs.version_no_v }}.tgz
+
+    - name: Trigger Website Rebuild
+      uses: peter-evans/repository-dispatch@v3
+      with:
+        token: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+        repository: vfarcic/dot-ai-website
+        event-type: upstream-release
+        client-payload: '{"source": "dot-ai-controller", "version": "${{ steps.version.outputs.version }}"}'
