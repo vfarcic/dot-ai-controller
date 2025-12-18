@@ -4,20 +4,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// SecretReference references a key in a Kubernetes Secret
-type SecretReference struct {
-	// Name of the secret in the same namespace as the RemediationPolicy
-	// +required
-	Name string `json:"name"`
-
-	// Key within the secret containing the value
-	// +required
-	Key string `json:"key"`
-}
-
 // EventSelector defines criteria for selecting Kubernetes events
 type EventSelector struct {
 	// Type of event (Warning, Normal)

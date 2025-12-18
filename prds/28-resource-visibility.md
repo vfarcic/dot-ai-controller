@@ -1,7 +1,7 @@
 # PRD #28: Resource Visibility and Status Tracking
 
 **GitHub Issue**: [#28](https://github.com/vfarcic/dot-ai-controller/issues/28)
-**Status**: Draft
+**Status**: In Progress
 **Priority**: High
 **Created**: 2025-12-13
 
@@ -692,11 +692,12 @@ resourceSync:
 
 ### Phase 1: Controller (dot-ai-controller)
 
-- [ ] **M1: Resource discovery and dynamic informers**
+- [x] **M1: Resource discovery and dynamic informers**
   - Implement dynamic resource discovery using discovery API
   - Create dynamic informers for each discovered GVR
-  - Periodic re-discovery for new CRDs (every 5 minutes)
+  - ~~Periodic re-discovery for new CRDs~~ → **Improved**: CRD watching via informer for immediate detection
   - Handle CRD removal gracefully
+  - **Added**: `ResourceSyncConfig` CRD for CR-based configuration (mcpEndpoint, debounceWindowSeconds, resyncIntervalMinutes)
 
 - [ ] **M2: Event handlers and change detection**
   - Implement OnAdd, OnUpdate, OnDelete handlers
@@ -809,6 +810,9 @@ resourceSync:
 | **Debounce buffer (10s, last-state-wins)** - Collect changes per resource ID. Deletes always preserved. | Reduces HTTP call volume. Handles rapid event bursts. Simple implementation. |
 | **Periodic resync (1 hour default)** - Controller sends full state; MCP diffs against Qdrant. | Safety net for eventual consistency. Diff approach minimizes embedding regeneration cost. Catches missed deletes. |
 | **Idempotent deletes** - Always send deletes to MCP. MCP ignores "not found" errors. | Simpler logic. MCP handles idempotency. |
+| **CR-based configuration** - New `ResourceSyncConfig` CRD (cluster-scoped) enables/configures resource syncing. Controller is dormant until CR exists. | Same pattern as RemediationPolicy. Dynamic enablement without restart. GitOps-friendly. Multiple configs supported. |
+| **CRD watching instead of polling** - Watch CRDs directly via informer for immediate detection of new/removed custom resources. | Immediate response (seconds vs 5 minutes). More efficient than polling. Simpler code (no periodic goroutine). |
+| **Shared SecretReference type** - Moved `SecretReference` to `common_types.go` for reuse across CRDs. | Avoids duplication. Consistent pattern across RemediationPolicy and ResourceSyncConfig. |
 
 ---
 
@@ -818,6 +822,8 @@ resourceSync:
 |------|--------|
 | 2025-12-13 | PRD created |
 | 2025-12-18 | Design finalized: single-cluster scope, semantic search architecture, controller-MCP-Qdrant flow |
+| 2025-12-18 | Implementation started - created feature branch `feature/prd-28-resource-visibility` |
+| 2025-12-18 | **M1 Complete**: Resource discovery and dynamic informers. Created `ResourceSyncConfig` CRD, `resourcesync_controller.go`, shared `common_types.go`. Improved design: CRD watching via informer instead of polling for immediate detection of new CRDs. |
 
 ---
 
