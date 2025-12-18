@@ -6,10 +6,11 @@
 |-------|-------|
 | **PRD ID** | 30 |
 | **Feature Name** | Trigger Website Rebuild on Release |
-| **Status** | Draft |
+| **Status** | Complete |
 | **Priority** | High |
 | **Created** | 2025-12-17 |
-| **Last Updated** | 2025-12-17 |
+| **Last Updated** | 2025-12-18 |
+| **Completed** | 2025-12-18 |
 
 ## Problem Statement
 
@@ -62,9 +63,9 @@ Add this step at the end of the `build-and-release` job in `.github/workflows/re
 
 ## Milestones
 
-- [ ] Create PAT with appropriate permissions
-- [ ] Add `WEBSITE_DISPATCH_TOKEN` secret to repository
-- [ ] Add repository dispatch step to release workflow
+- [x] Create PAT with appropriate permissions
+- [x] Add `WEBSITE_DISPATCH_TOKEN` secret to repository
+- [x] Add repository dispatch step to release workflow
 - [ ] Test end-to-end: release triggers website rebuild
 - [ ] Verify documentation updates appear on website
 
@@ -85,6 +86,7 @@ Add this step at the end of the `build-and-release` job in `.github/workflows/re
 | Date | Update |
 |------|--------|
 | 2025-12-17 | PRD created |
+| 2025-12-18 | Implementation complete - added repository dispatch step to release.yaml |
 
 ## References
 
