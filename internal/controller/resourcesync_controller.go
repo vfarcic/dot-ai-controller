@@ -16,6 +16,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,60 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	dotaiv1alpha1 "github.com/vfarcic/dot-ai-controller/api/v1alpha1"
+)
+
+// ChangeAction represents the type of change detected for a resource
+type ChangeAction int
+
+const (
+	// ActionUpsert indicates a resource was added or updated
+	ActionUpsert ChangeAction = iota
+	// ActionDelete indicates a resource was deleted
+	ActionDelete
+)
+
+// ResourceData contains the data extracted from a Kubernetes resource for syncing to MCP
+type ResourceData struct {
+	// ID is the unique identifier in format namespace:apiVersion:kind:name
+	// For cluster-scoped resources, namespace is "_cluster"
+	ID string `json:"id"`
+	// Namespace of the resource (empty for cluster-scoped)
+	Namespace string `json:"namespace,omitempty"`
+	// Name of the resource
+	Name string `json:"name"`
+	// Kind of the resource (e.g., "Deployment", "Pod")
+	Kind string `json:"kind"`
+	// APIVersion including group (e.g., "apps/v1", "v1")
+	APIVersion string `json:"apiVersion"`
+	// Labels from the resource
+	Labels map[string]string `json:"labels,omitempty"`
+	// Annotations from the resource (selected ones, not all)
+	Annotations map[string]string `json:"annotations,omitempty"`
+	// Status is the complete status object from the resource
+	Status interface{} `json:"status,omitempty"`
+	// CreatedAt is when the resource was created
+	CreatedAt time.Time `json:"createdAt"`
+	// UpdatedAt is when this data was last updated (now)
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// ResourceChange represents a change to be synced to MCP
+type ResourceChange struct {
+	// Action is either ActionUpsert or ActionDelete
+	Action ChangeAction
+	// Data contains the resource data (nil for deletes)
+	Data *ResourceData
+	// ID is the resource identifier (used for deletes)
+	ID string
+}
+
+const (
+	// changeQueueBufferSize is the buffer size for the change queue
+	// Large enough to handle startup bursts and rolling updates
+	changeQueueBufferSize = 10000
+
+	// clusterScopeNamespace is used in resource IDs for cluster-scoped resources
+	clusterScopeNamespace = "_cluster"
 )
 
 var (
@@ -76,6 +131,9 @@ type activeConfigState struct {
 	informersMu     sync.RWMutex // protects activeInformers
 	stopCh          chan struct{}
 	cancel          context.CancelFunc
+	// changeQueue receives resource changes from informer event handlers
+	// Buffered to prevent blocking informers during bursts
+	changeQueue chan *ResourceChange
 }
 
 // +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=resourcesyncconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -213,6 +271,7 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 		activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
 		stopCh:          make(chan struct{}),
 		cancel:          cancel,
+		changeQueue:     make(chan *ResourceChange, changeQueueBufferSize),
 	}
 
 	// Discover existing resources and setup informers
@@ -565,31 +624,195 @@ func (r *ResourceSyncReconciler) shouldSkipResource(group, resource string) bool
 	return false
 }
 
-// Event handler factories (placeholders for M2)
+// buildResourceID creates a unique identifier for a resource
+// Format: namespace:apiVersion:kind:name
+// For cluster-scoped resources, namespace is "_cluster"
+func buildResourceID(obj *unstructured.Unstructured) string {
+	ns := obj.GetNamespace()
+	if ns == "" {
+		ns = clusterScopeNamespace
+	}
+	return fmt.Sprintf("%s:%s:%s:%s", ns, obj.GetAPIVersion(), obj.GetKind(), obj.GetName())
+}
 
+// extractResourceData extracts the relevant data from a Kubernetes resource
+func extractResourceData(obj *unstructured.Unstructured) *ResourceData {
+	// Get labels (make a copy to avoid mutation)
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	} else {
+		labelsCopy := make(map[string]string, len(labels))
+		for k, v := range labels {
+			labelsCopy[k] = v
+		}
+		labels = labelsCopy
+	}
+
+	// Get selected annotations (skip large/internal ones)
+	annotations := make(map[string]string)
+	for k, v := range obj.GetAnnotations() {
+		// Skip kubectl's last-applied-configuration (can be very large)
+		if k == "kubectl.kubernetes.io/last-applied-configuration" {
+			continue
+		}
+		// Skip managed fields annotation
+		if strings.HasPrefix(k, "meta.helm.sh/") {
+			continue
+		}
+		// Include description-like annotations that are useful for search
+		if k == "description" || strings.HasSuffix(k, "/description") {
+			annotations[k] = v
+		}
+	}
+
+	// Get status (complete, including timestamps)
+	status := obj.Object["status"]
+
+	return &ResourceData{
+		ID:          buildResourceID(obj),
+		Namespace:   obj.GetNamespace(),
+		Name:        obj.GetName(),
+		Kind:        obj.GetKind(),
+		APIVersion:  obj.GetAPIVersion(),
+		Labels:      labels,
+		Annotations: annotations,
+		Status:      status,
+		CreatedAt:   obj.GetCreationTimestamp().Time,
+		UpdatedAt:   time.Now(),
+	}
+}
+
+// hasRelevantChanges checks if the resource has changes worth syncing
+// Compares labels and complete status using deep equality
+func hasRelevantChanges(oldObj, newObj *unstructured.Unstructured) bool {
+	// Compare labels
+	if !reflect.DeepEqual(oldObj.GetLabels(), newObj.GetLabels()) {
+		return true
+	}
+
+	// Compare complete status (including timestamps)
+	oldStatus := oldObj.Object["status"]
+	newStatus := newObj.Object["status"]
+	return !reflect.DeepEqual(oldStatus, newStatus)
+}
+
+// Event handler factories
+
+// makeOnAdd creates an OnAdd handler that queues new resources for syncing
 func (r *ResourceSyncReconciler) makeOnAdd(state *activeConfigState) func(obj interface{}) {
+	logger := logf.Log.WithName("resourcesync")
+
 	return func(obj interface{}) {
-		// Will be implemented in M2
-		_ = obj.(*unstructured.Unstructured)
+		u, ok := obj.(*unstructured.Unstructured)
+		if !ok {
+			logger.V(2).Info("OnAdd received non-unstructured object", "type", fmt.Sprintf("%T", obj))
+			return
+		}
+
+		// Extract resource data
+		data := extractResourceData(u)
+
+		// Queue the change (non-blocking with select to handle full queue)
+		change := &ResourceChange{
+			Action: ActionUpsert,
+			Data:   data,
+			ID:     data.ID,
+		}
+
+		select {
+		case state.changeQueue <- change:
+			logger.V(2).Info("Queued resource add", "id", data.ID)
+		default:
+			// Queue is full - log and drop (debounce buffer in M3 will catch this on resync)
+			logger.V(1).Info("Change queue full, dropping add event", "id", data.ID)
+		}
 	}
 }
 
+// makeOnUpdate creates an OnUpdate handler that queues changed resources for syncing
 func (r *ResourceSyncReconciler) makeOnUpdate(state *activeConfigState) func(oldObj, newObj interface{}) {
+	logger := logf.Log.WithName("resourcesync")
+
 	return func(oldObj, newObj interface{}) {
-		// Will be implemented in M2
-		_ = oldObj.(*unstructured.Unstructured)
-		_ = newObj.(*unstructured.Unstructured)
+		oldU, ok := oldObj.(*unstructured.Unstructured)
+		if !ok {
+			logger.V(2).Info("OnUpdate received non-unstructured old object", "type", fmt.Sprintf("%T", oldObj))
+			return
+		}
+
+		newU, ok := newObj.(*unstructured.Unstructured)
+		if !ok {
+			logger.V(2).Info("OnUpdate received non-unstructured new object", "type", fmt.Sprintf("%T", newObj))
+			return
+		}
+
+		// Check if there are relevant changes
+		if !hasRelevantChanges(oldU, newU) {
+			logger.V(3).Info("No relevant changes detected", "id", buildResourceID(newU))
+			return
+		}
+
+		// Extract resource data
+		data := extractResourceData(newU)
+
+		// Queue the change
+		change := &ResourceChange{
+			Action: ActionUpsert,
+			Data:   data,
+			ID:     data.ID,
+		}
+
+		select {
+		case state.changeQueue <- change:
+			logger.V(2).Info("Queued resource update", "id", data.ID)
+		default:
+			// Queue is full - log and drop
+			logger.V(1).Info("Change queue full, dropping update event", "id", data.ID)
+		}
 	}
 }
 
+// makeOnDelete creates an OnDelete handler that queues resource deletions for syncing
 func (r *ResourceSyncReconciler) makeOnDelete(state *activeConfigState) func(obj interface{}) {
+	logger := logf.Log.WithName("resourcesync")
+
 	return func(obj interface{}) {
-		// Will be implemented in M2
+		var u *unstructured.Unstructured
+
 		switch t := obj.(type) {
 		case *unstructured.Unstructured:
-			_ = t
+			u = t
 		case cache.DeletedFinalStateUnknown:
-			_ = t.Obj.(*unstructured.Unstructured)
+			// Object was deleted before we could process it
+			var ok bool
+			u, ok = t.Obj.(*unstructured.Unstructured)
+			if !ok {
+				logger.V(2).Info("OnDelete DeletedFinalStateUnknown contains non-unstructured object",
+					"type", fmt.Sprintf("%T", t.Obj))
+				return
+			}
+		default:
+			logger.V(2).Info("OnDelete received unexpected object type", "type", fmt.Sprintf("%T", obj))
+			return
+		}
+
+		// Build the resource ID for deletion
+		id := buildResourceID(u)
+
+		// Queue the deletion
+		change := &ResourceChange{
+			Action: ActionDelete,
+			Data:   nil, // No data needed for deletes
+			ID:     id,
+		}
+
+		select {
+		case state.changeQueue <- change:
+			logger.V(2).Info("Queued resource delete", "id", id)
+		default:
+			// Queue is full - log and drop (resync will catch orphaned records)
+			logger.V(1).Info("Change queue full, dropping delete event", "id", id)
 		}
 	}
 }

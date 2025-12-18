@@ -699,11 +699,15 @@ resourceSync:
   - Handle CRD removal gracefully
   - **Added**: `ResourceSyncConfig` CRD for CR-based configuration (mcpEndpoint, debounceWindowSeconds, resyncIntervalMinutes)
 
-- [ ] **M2: Event handlers and change detection**
+- [x] **M2: Event handlers and change detection**
   - Implement OnAdd, OnUpdate, OnDelete handlers
   - Change detection comparing complete status + labels (simple deep equal)
   - Extract complete resource data (kind, namespace, name, labels, full status)
   - Status includes all fields and timestamps (no stripping)
+  - **Added**: `ResourceData` and `ResourceChange` types for structured data passing
+  - **Added**: Buffered change queue (10,000 capacity) to pass changes to debounce buffer (M3)
+  - **Added**: Resource ID format: `namespace:apiVersion:kind:name` (e.g., `default:apps/v1:Deployment:nginx`)
+  - **Added**: Cluster-scoped resources use `_cluster` as namespace prefix
 
 - [ ] **M3: Debounce buffer and MCP client**
   - Implement debounce buffer with 10-second window
@@ -824,6 +828,7 @@ resourceSync:
 | 2025-12-18 | Design finalized: single-cluster scope, semantic search architecture, controller-MCP-Qdrant flow |
 | 2025-12-18 | Implementation started - created feature branch `feature/prd-28-resource-visibility` |
 | 2025-12-18 | **M1 Complete**: Resource discovery and dynamic informers. Created `ResourceSyncConfig` CRD, `resourcesync_controller.go`, shared `common_types.go`. Improved design: CRD watching via informer instead of polling for immediate detection of new CRDs. |
+| 2025-12-18 | **M2 Complete**: Event handlers and change detection. Implemented `makeOnAdd`, `makeOnUpdate`, `makeOnDelete` handlers with `hasRelevantChanges()` for filtering. Added `ResourceData`/`ResourceChange` types, buffered change queue (10K), and resource ID format `namespace:apiVersion:kind:name`. Comprehensive unit tests added (75.8% coverage). |
 
 ---
 
