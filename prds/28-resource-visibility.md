@@ -815,11 +815,11 @@ resourceSync:
   - **Added**: `periodicResyncLoop()` goroutine with configurable interval from `ResyncIntervalMinutes`
   - **Added**: Status updates for `LastResyncTime`, `TotalResourcesSynced`, `SyncErrors`
 
-- [ ] **M5: Configuration and Helm chart**
-  - Add resourceSync configuration to Helm values
-  - MCP endpoint, timing settings
-  - Secret reference for MCP API key
-  - Feature flag to enable/disable
+- [x] **M5: Configuration and Helm chart**
+  - Added `ResourceSyncConfig` CRD to Helm chart templates
+  - Updated `manager-role.yaml` with resourcesyncconfigs RBAC (resources, status, finalizers)
+  - Configuration via CRD (same pattern as RemediationPolicy) - no Helm values needed
+  - Users create `ResourceSyncConfig` CR after install to enable feature
 
 - [ ] **M6: Testing and documentation**
   - Unit tests for change detection, debounce buffer
@@ -926,6 +926,7 @@ resourceSync:
 | 2025-12-18 | **API Contract Defined**: Documented `POST /api/v1/resources/sync` endpoint contract aligned with MCP's `RestApiResponse` pattern. Ready for M3 implementation (controller side) and M7 implementation (MCP side). |
 | 2025-12-18 | **M3 Complete**: Debounce buffer and MCP client. Created `resourcesync_mcp.go` (MCP client with retry logic, request/response types) and `resourcesync_debounce.go` (debounce buffer with configurable window, last-state-wins, metrics). Integrated with controller startup. Safe channel closure handling. Unit tests added (77.5% coverage). |
 | 2025-12-18 | **M4 Complete**: Initial sync and periodic resync. Added `listAllResources()` to iterate informer caches, `performResync()` to send full state to MCP, `performInitialSync()` for startup sync after cache sync, and `periodicResyncLoop()` goroutine for configurable periodic resyncs. Status updates include `LastResyncTime`, `TotalResourcesSynced`, `SyncErrors`. Unit tests added with mock informers (74.8% coverage). |
+| 2025-12-19 | **M5 Complete**: Configuration and Helm chart. Added `ResourceSyncConfig` CRD to `charts/dot-ai-controller/templates/`. Updated `manager-role.yaml` with resourcesyncconfigs RBAC. Follows same pattern as RemediationPolicy - CRD-based config, users create CR after install. All tests pass (74.8% coverage). |
 
 ---
 
