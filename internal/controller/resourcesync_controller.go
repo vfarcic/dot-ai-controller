@@ -331,12 +331,14 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 	// Discover existing resources and setup informers
 	if err := r.discoverAndSetupInformers(ctx, state); err != nil {
 		cancel()
+		close(changeQueue)
 		return fmt.Errorf("failed to setup informers: %w", err)
 	}
 
 	// Setup CRD watcher for immediate detection of new/removed CRDs
 	if err := r.setupCRDWatcher(ctx, state); err != nil {
 		cancel()
+		close(changeQueue)
 		return fmt.Errorf("failed to setup CRD watcher: %w", err)
 	}
 
@@ -1035,31 +1037,33 @@ func (r *ResourceSyncReconciler) listAllResources(state *activeConfigState) []*R
 
 // performResync sends all current resources to MCP for reconciliation
 // MCP will diff against Qdrant and handle any drift (insert new, update changed, delete missing)
-func (r *ResourceSyncReconciler) performResync(ctx context.Context, state *activeConfigState) error {
+// performResync syncs all resources to MCP and returns the resource count
+func (r *ResourceSyncReconciler) performResync(ctx context.Context, state *activeConfigState) (int, error) {
 	logger := logf.FromContext(ctx).WithName("resourcesync")
 
 	if state.mcpClient == nil {
 		logger.V(1).Info("MCP client not configured, skipping resync")
-		return nil
+		return 0, nil
 	}
 
-	// List all resources from informer caches
+	// List all resources from informer caches (only called once)
 	allResources := r.listAllResources(state)
+	resourceCount := len(allResources)
 
-	if len(allResources) == 0 {
+	if resourceCount == 0 {
 		logger.Info("No resources to resync")
-		return nil
+		return 0, nil
 	}
 
 	logger.Info("Performing resync with MCP",
-		"resourceCount", len(allResources),
+		"resourceCount", resourceCount,
 	)
 
 	// Send to MCP with IsResync flag
 	resp, err := state.mcpClient.Resync(ctx, allResources)
 	if err != nil {
 		logger.Error(err, "Failed to resync resources to MCP")
-		return fmt.Errorf("resync failed: %w", err)
+		return resourceCount, fmt.Errorf("resync failed: %w", err)
 	}
 
 	if !resp.Success {
@@ -1068,7 +1072,7 @@ func (r *ResourceSyncReconciler) performResync(ctx context.Context, state *activ
 			"error", errMsg,
 			"failures", resp.GetFailures(),
 		)
-		return fmt.Errorf("MCP resync error: %s", errMsg)
+		return resourceCount, fmt.Errorf("MCP resync error: %s", errMsg)
 	}
 
 	upserted, deleted := resp.GetSuccessCounts()
@@ -1077,7 +1081,7 @@ func (r *ResourceSyncReconciler) performResync(ctx context.Context, state *activ
 		"deleted", deleted,
 	)
 
-	return nil
+	return resourceCount, nil
 }
 
 // performInitialSync performs the initial sync after informer caches are synced
@@ -1087,7 +1091,7 @@ func (r *ResourceSyncReconciler) performInitialSync(ctx context.Context, state *
 
 	logger.Info("Performing initial sync", "config", configName)
 
-	err := r.performResync(ctx, state)
+	resourceCount, err := r.performResync(ctx, state)
 
 	// Update status
 	r.configsMu.RLock()
@@ -1115,10 +1119,9 @@ func (r *ResourceSyncReconciler) performInitialSync(ctx context.Context, state *
 		logger.Error(err, "Initial sync failed", "config", configName)
 	} else {
 		config.Status.LastError = ""
-		// Update total synced count from informer cache size
-		allResources := r.listAllResources(state)
-		config.Status.TotalResourcesSynced = int64(len(allResources))
-		logger.Info("Initial sync completed", "config", configName, "resourceCount", len(allResources))
+		// Use count from performResync (avoids redundant listAllResources call)
+		config.Status.TotalResourcesSynced = int64(resourceCount)
+		logger.Info("Initial sync completed", "config", configName, "resourceCount", resourceCount)
 	}
 
 	if statusErr := r.Status().Update(ctx, &config); statusErr != nil {
@@ -1157,7 +1160,7 @@ func (r *ResourceSyncReconciler) periodicResyncLoop(ctx context.Context, state *
 
 			logger.Info("Starting periodic resync", "config", configName)
 
-			err := r.performResync(ctx, state)
+			resourceCount, err := r.performResync(ctx, state)
 
 			// Update status
 			var config dotaiv1alpha1.ResourceSyncConfig
@@ -1176,10 +1179,9 @@ func (r *ResourceSyncReconciler) periodicResyncLoop(ctx context.Context, state *
 				logger.Error(err, "Periodic resync failed", "config", configName)
 			} else {
 				config.Status.LastError = ""
-				// Update total synced count
-				allResources := r.listAllResources(state)
-				config.Status.TotalResourcesSynced = int64(len(allResources))
-				logger.Info("Periodic resync completed", "config", configName, "resourceCount", len(allResources))
+				// Use count from performResync (avoids redundant listAllResources call)
+				config.Status.TotalResourcesSynced = int64(resourceCount)
+				logger.Info("Periodic resync completed", "config", configName, "resourceCount", resourceCount)
 			}
 
 			if statusErr := r.Status().Update(ctx, &config); statusErr != nil {

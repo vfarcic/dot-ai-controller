@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"math/rand"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -1842,8 +1843,9 @@ var _ = Describe("ResourceSync Controller", func() {
 					activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
 				}
 
-				err := reconciler.performResync(testCtx, state)
+				count, err := reconciler.performResync(testCtx, state)
 				Expect(err).NotTo(HaveOccurred())
+				Expect(count).To(Equal(0))
 			})
 
 			It("should skip resync when no resources exist", func() {
@@ -1854,8 +1856,9 @@ var _ = Describe("ResourceSync Controller", func() {
 					activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
 				}
 
-				err := reconciler.performResync(testCtx, state)
+				count, err := reconciler.performResync(testCtx, state)
 				Expect(err).NotTo(HaveOccurred())
+				Expect(count).To(Equal(0))
 			})
 		})
 	})
@@ -1937,8 +1940,12 @@ func randString(n int) string {
 	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = letters[time.Now().UnixNano()%int64(len(letters))]
-		time.Sleep(time.Nanosecond)
+		b[i] = letters[rand.Intn(len(letters))]
 	}
 	return string(b)
+}
+
+func init() {
+	// Seed random number generator for unique test names
+	rand.Seed(time.Now().UnixNano())
 }

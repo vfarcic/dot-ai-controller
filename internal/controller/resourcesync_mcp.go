@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -141,7 +142,7 @@ func NewMCPResourceSyncClient(cfg MCPResourceSyncClientConfig) *MCPResourceSyncC
 	}
 
 	return &MCPResourceSyncClient{
-		endpoint:            cfg.Endpoint + "/api/v1/resources/sync",
+		endpoint:            strings.TrimSuffix(cfg.Endpoint, "/") + "/api/v1/resources/sync",
 		httpClient:          cfg.HTTPClient,
 		k8sClient:           cfg.K8sClient,
 		authSecretRef:       cfg.AuthSecretRef,
@@ -327,8 +328,10 @@ func (c *MCPResourceSyncClient) send(ctx context.Context, req SyncRequest) (*Syn
 	var syncResponse SyncResponse
 	if err := json.Unmarshal(responseBody, &syncResponse); err != nil {
 		// If JSON parsing fails but HTTP was successful, treat as success
-		logger.V(1).Info("Response is not JSON, treating as successful",
+		// Log at Info level (not V(1)) to make unexpected responses visible
+		logger.Info("Response is not JSON, treating as successful",
 			"response", string(responseBody),
+			"parseError", err.Error(),
 		)
 		return &SyncResponse{
 			Success: true,
