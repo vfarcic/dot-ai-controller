@@ -100,11 +100,8 @@ func (b *DebounceBuffer) record(change *ResourceChange) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	// ID is the internal identifier for deduplication
 	id := change.ID
-	if id == "" && change.Data != nil {
-		id = change.Data.ID
-	}
-
 	if id == "" {
 		logger.V(1).Info("Dropping change with empty ID")
 		b.incrementDropped()
@@ -137,14 +134,21 @@ func (b *DebounceBuffer) flush(ctx context.Context) {
 		return
 	}
 
-	// Collect changes
+	// Collect changes - store both ID (for requeue) and full change data
 	var upserts []*ResourceData
-	var deletes []string
+	var deletes []*ResourceIdentifier
+	// Keep track of changes for potential requeue
+	changesToRequeue := make(map[string]*ResourceChange)
+
 	for id, change := range b.changes {
 		if change.Action == ActionDelete {
-			deletes = append(deletes, id)
+			if change.DeleteIdentifier != nil {
+				deletes = append(deletes, change.DeleteIdentifier)
+				changesToRequeue[id] = change
+			}
 		} else if change.Data != nil {
 			upserts = append(upserts, change.Data)
+			changesToRequeue[id] = change
 		}
 	}
 
@@ -175,7 +179,7 @@ func (b *DebounceBuffer) flush(ctx context.Context) {
 			"deletes", len(deletes),
 		)
 		// Re-queue failed changes for next flush
-		b.requeueChanges(upserts, deletes)
+		b.requeueChangesFromMap(changesToRequeue)
 		return
 	}
 
@@ -191,27 +195,14 @@ func (b *DebounceBuffer) flush(ctx context.Context) {
 	}
 }
 
-// requeueChanges adds failed changes back to the buffer for retry
-func (b *DebounceBuffer) requeueChanges(upserts []*ResourceData, deletes []string) {
+// requeueChangesFromMap adds failed changes back to the buffer for retry
+func (b *DebounceBuffer) requeueChangesFromMap(changes map[string]*ResourceChange) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	for _, data := range upserts {
-		if _, exists := b.changes[data.ID]; !exists {
-			b.changes[data.ID] = &ResourceChange{
-				Action: ActionUpsert,
-				Data:   data,
-				ID:     data.ID,
-			}
-		}
-	}
-
-	for _, id := range deletes {
+	for id, change := range changes {
 		if _, exists := b.changes[id]; !exists {
-			b.changes[id] = &ResourceChange{
-				Action: ActionDelete,
-				ID:     id,
-			}
+			b.changes[id] = change
 		}
 	}
 }

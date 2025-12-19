@@ -27,8 +27,9 @@ import (
 type SyncRequest struct {
 	// Upserts contains resources to create or update
 	Upserts []*ResourceData `json:"upserts,omitempty"`
-	// Deletes contains resource IDs to delete
-	Deletes []string `json:"deletes,omitempty"`
+	// Deletes contains resource identifiers to delete
+	// MCP constructs the ID from namespace/apiVersion/kind/name
+	Deletes []*ResourceIdentifier `json:"deletes,omitempty"`
 	// IsResync indicates this is a full resync (MCP should diff against Qdrant)
 	IsResync bool `json:"isResync,omitempty"`
 }
@@ -154,7 +155,7 @@ func NewMCPResourceSyncClient(cfg MCPResourceSyncClientConfig) *MCPResourceSyncC
 }
 
 // SyncResources sends upserts and deletes to the MCP endpoint
-func (c *MCPResourceSyncClient) SyncResources(ctx context.Context, upserts []*ResourceData, deletes []string) (*SyncResponse, error) {
+func (c *MCPResourceSyncClient) SyncResources(ctx context.Context, upserts []*ResourceData, deletes []*ResourceIdentifier) (*SyncResponse, error) {
 	req := SyncRequest{
 		Upserts:  upserts,
 		Deletes:  deletes,

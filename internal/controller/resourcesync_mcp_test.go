@@ -203,10 +203,12 @@ func TestMCPResourceSyncClient_SyncResources_Success(t *testing.T) {
 	// Test sync
 	ctx := context.Background()
 	upserts := []*ResourceData{
-		{ID: "default:apps/v1:Deployment:nginx", Name: "nginx", Kind: "Deployment"},
-		{ID: "default:v1:Service:nginx", Name: "nginx", Kind: "Service"},
+		{Namespace: "default", Name: "nginx", Kind: "Deployment", APIVersion: "apps/v1"},
+		{Namespace: "default", Name: "nginx", Kind: "Service", APIVersion: "v1"},
 	}
-	deletes := []string{"default:apps/v1:Deployment:old"}
+	deletes := []*ResourceIdentifier{
+		{Namespace: "default", Name: "old", Kind: "Deployment", APIVersion: "apps/v1"},
+	}
 
 	resp, err := client.SyncResources(ctx, upserts, deletes)
 	require.NoError(t, err)
@@ -326,9 +328,9 @@ func TestMCPResourceSyncClient_Resync(t *testing.T) {
 
 	ctx := context.Background()
 	resources := []*ResourceData{
-		{ID: "default:apps/v1:Deployment:a"},
-		{ID: "default:apps/v1:Deployment:b"},
-		{ID: "default:apps/v1:Deployment:c"},
+		{Namespace: "default", Name: "a", Kind: "Deployment", APIVersion: "apps/v1"},
+		{Namespace: "default", Name: "b", Kind: "Deployment", APIVersion: "apps/v1"},
+		{Namespace: "default", Name: "c", Kind: "Deployment", APIVersion: "apps/v1"},
 	}
 
 	resp, err := client.Resync(ctx, resources)
@@ -371,7 +373,7 @@ func TestMCPResourceSyncClient_RetryOnFailure(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	resp, err := client.SyncResources(ctx, []*ResourceData{{ID: "test"}}, nil)
+	resp, err := client.SyncResources(ctx, []*ResourceData{{Name: "test", Kind: "Pod", APIVersion: "v1"}}, nil)
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	assert.Equal(t, 3, attempts, "Expected 3 attempts (2 failures + 1 success)")

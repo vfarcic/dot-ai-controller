@@ -806,7 +806,7 @@ var _ = Describe("ResourceSync Controller", func() {
 			}
 
 			data := extractResourceData(obj)
-			Expect(data.ID).To(Equal("default:apps/v1:Deployment:nginx"))
+			// ID is no longer in ResourceData - MCP constructs it from namespace/apiVersion/kind/name
 			Expect(data.Name).To(Equal("nginx"))
 			Expect(data.Namespace).To(Equal("default"))
 			Expect(data.Kind).To(Equal("Deployment"))

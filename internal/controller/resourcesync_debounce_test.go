@@ -25,7 +25,7 @@ func TestDebounceBuffer_Record(t *testing.T) {
 	buffer.record(&ResourceChange{
 		Action: ActionUpsert,
 		ID:     "test:v1:Pod:foo",
-		Data:   &ResourceData{ID: "test:v1:Pod:foo", Name: "foo"},
+		Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 	assert.Equal(t, 1, buffer.PendingCount())
 
@@ -33,14 +33,15 @@ func TestDebounceBuffer_Record(t *testing.T) {
 	buffer.record(&ResourceChange{
 		Action: ActionUpsert,
 		ID:     "test:v1:Pod:foo",
-		Data:   &ResourceData{ID: "test:v1:Pod:foo", Name: "foo-updated"},
+		Data:   &ResourceData{Name: "foo-updated", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 	assert.Equal(t, 1, buffer.PendingCount()) // Still 1, not 2
 
 	// Test delete
 	buffer.record(&ResourceChange{
-		Action: ActionDelete,
-		ID:     "test:v1:Pod:bar",
+		Action:           ActionDelete,
+		ID:               "test:v1:Pod:bar",
+		DeleteIdentifier: &ResourceIdentifier{Name: "bar", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 	assert.Equal(t, 2, buffer.PendingCount())
 }
@@ -56,13 +57,14 @@ func TestDebounceBuffer_DeleteOverwritesUpsert(t *testing.T) {
 	buffer.record(&ResourceChange{
 		Action: ActionUpsert,
 		ID:     "test:v1:Pod:foo",
-		Data:   &ResourceData{ID: "test:v1:Pod:foo"},
+		Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 
 	// Then delete - should overwrite upsert
 	buffer.record(&ResourceChange{
-		Action: ActionDelete,
-		ID:     "test:v1:Pod:foo",
+		Action:           ActionDelete,
+		ID:               "test:v1:Pod:foo",
+		DeleteIdentifier: &ResourceIdentifier{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 
 	assert.Equal(t, 1, buffer.PendingCount())
@@ -83,15 +85,16 @@ func TestDebounceBuffer_UpsertIgnoredAfterDelete(t *testing.T) {
 
 	// First delete
 	buffer.record(&ResourceChange{
-		Action: ActionDelete,
-		ID:     "test:v1:Pod:foo",
+		Action:           ActionDelete,
+		ID:               "test:v1:Pod:foo",
+		DeleteIdentifier: &ResourceIdentifier{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 
 	// Then upsert - should be ignored because delete is preserved
 	buffer.record(&ResourceChange{
 		Action: ActionUpsert,
 		ID:     "test:v1:Pod:foo",
-		Data:   &ResourceData{ID: "test:v1:Pod:foo"},
+		Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 
 	assert.Equal(t, 1, buffer.PendingCount())
@@ -114,7 +117,7 @@ func TestDebounceBuffer_EmptyIDDropped(t *testing.T) {
 	buffer.record(&ResourceChange{
 		Action: ActionUpsert,
 		ID:     "",
-		Data:   &ResourceData{ID: ""},
+		Data:   &ResourceData{Name: ""},
 	})
 
 	assert.Equal(t, 0, buffer.PendingCount())
@@ -174,16 +177,17 @@ func TestDebounceBuffer_FlushSendsToMCP(t *testing.T) {
 	buffer.record(&ResourceChange{
 		Action: ActionUpsert,
 		ID:     "test:v1:Pod:foo",
-		Data:   &ResourceData{ID: "test:v1:Pod:foo", Name: "foo"},
+		Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 	buffer.record(&ResourceChange{
 		Action: ActionUpsert,
 		ID:     "test:v1:Pod:bar",
-		Data:   &ResourceData{ID: "test:v1:Pod:bar", Name: "bar"},
+		Data:   &ResourceData{Name: "bar", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 	buffer.record(&ResourceChange{
-		Action: ActionDelete,
-		ID:     "test:v1:Pod:old",
+		Action:           ActionDelete,
+		ID:               "test:v1:Pod:old",
+		DeleteIdentifier: &ResourceIdentifier{Name: "old", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 
 	assert.Equal(t, 3, buffer.PendingCount())
@@ -228,7 +232,7 @@ func TestDebounceBuffer_FlushRequeuesOnError(t *testing.T) {
 	buffer.record(&ResourceChange{
 		Action: ActionUpsert,
 		ID:     "test:v1:Pod:foo",
-		Data:   &ResourceData{ID: "test:v1:Pod:foo"},
+		Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 
 	// Flush - should fail and requeue
@@ -271,7 +275,7 @@ func TestDebounceBuffer_RunProcessesChanges(t *testing.T) {
 		changeQueue <- &ResourceChange{
 			Action: ActionUpsert,
 			ID:     "test:v1:Pod:foo",
-			Data:   &ResourceData{ID: "test:v1:Pod:foo"},
+			Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 		}
 	}
 
@@ -366,9 +370,9 @@ func TestDebounceBuffer_GetMetrics(t *testing.T) {
 	})
 
 	// Add and flush changes
-	buffer.record(&ResourceChange{Action: ActionUpsert, ID: "a", Data: &ResourceData{ID: "a"}})
-	buffer.record(&ResourceChange{Action: ActionUpsert, ID: "b", Data: &ResourceData{ID: "b"}})
-	buffer.record(&ResourceChange{Action: ActionDelete, ID: "c"})
+	buffer.record(&ResourceChange{Action: ActionUpsert, ID: "a", Data: &ResourceData{Name: "a", Kind: "Pod", APIVersion: "v1"}})
+	buffer.record(&ResourceChange{Action: ActionUpsert, ID: "b", Data: &ResourceData{Name: "b", Kind: "Pod", APIVersion: "v1"}})
+	buffer.record(&ResourceChange{Action: ActionDelete, ID: "c", DeleteIdentifier: &ResourceIdentifier{Name: "c", Kind: "Pod", APIVersion: "v1"}})
 
 	ctx := context.Background()
 	buffer.flush(ctx)
@@ -418,7 +422,7 @@ func TestDebounceBuffer_FlushWithNilMCPClient(t *testing.T) {
 	buffer.record(&ResourceChange{
 		Action: ActionUpsert,
 		ID:     "test:v1:Pod:foo",
-		Data:   &ResourceData{ID: "test:v1:Pod:foo"},
+		Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 
 	require.Equal(t, 1, buffer.PendingCount())
@@ -447,7 +451,7 @@ func TestDebounceBuffer_ConcurrentRecords(t *testing.T) {
 			buffer.record(&ResourceChange{
 				Action: ActionUpsert,
 				ID:     "test:v1:Pod:foo", // Same ID, last-state-wins
-				Data:   &ResourceData{ID: "test:v1:Pod:foo"},
+				Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 			})
 		}(i)
 	}
@@ -471,7 +475,7 @@ func TestDebounceBuffer_DeduplicationPerformance(t *testing.T) {
 		buffer.record(&ResourceChange{
 			Action: ActionUpsert,
 			ID:     "test:v1:Pod:frequently-updated",
-			Data:   &ResourceData{ID: "test:v1:Pod:frequently-updated"},
+			Data:   &ResourceData{Name: "frequently-updated", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 		})
 	}
 	duration := time.Since(start)

@@ -56,10 +56,8 @@ const (
 )
 
 // ResourceData contains the data extracted from a Kubernetes resource for syncing to MCP
+// Note: ID is not included - MCP constructs it from namespace/apiVersion/kind/name
 type ResourceData struct {
-	// ID is the unique identifier in format namespace:apiVersion:kind:name
-	// For cluster-scoped resources, namespace is "_cluster"
-	ID string `json:"id"`
 	// Namespace of the resource (empty for cluster-scoped)
 	Namespace string `json:"namespace,omitempty"`
 	// Name of the resource
@@ -78,14 +76,31 @@ type ResourceData struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// ResourceIdentifier contains the fields needed to identify a resource for deletion
+// MCP uses these fields to construct the ID for the delete operation
+type ResourceIdentifier struct {
+	// Namespace of the resource (empty for cluster-scoped)
+	Namespace string `json:"namespace,omitempty"`
+	// Name of the resource
+	Name string `json:"name"`
+	// Kind of the resource (e.g., "Deployment", "Pod")
+	Kind string `json:"kind"`
+	// APIVersion including group (e.g., "apps/v1", "v1")
+	APIVersion string `json:"apiVersion"`
+}
+
 // ResourceChange represents a change to be synced to MCP
 type ResourceChange struct {
 	// Action is either ActionUpsert or ActionDelete
 	Action ChangeAction
 	// Data contains the resource data (nil for deletes)
 	Data *ResourceData
-	// ID is the resource identifier (used for deletes)
+	// ID is the internal resource identifier used for debounce buffer deduplication
+	// Format: namespace:apiVersion:kind:name (or _cluster:apiVersion:kind:name for cluster-scoped)
 	ID string
+	// DeleteIdentifier contains the fields MCP needs to construct the ID for delete operations
+	// Only populated for ActionDelete
+	DeleteIdentifier *ResourceIdentifier
 }
 
 const (
@@ -756,7 +771,6 @@ func extractResourceData(obj *unstructured.Unstructured) *ResourceData {
 	}
 
 	return &ResourceData{
-		ID:          buildResourceID(obj),
 		Namespace:   obj.GetNamespace(),
 		Name:        obj.GetName(),
 		Kind:        obj.GetKind(),
@@ -808,21 +822,22 @@ func (r *ResourceSyncReconciler) makeOnAdd(state *activeConfigState) func(obj in
 			return
 		}
 
-		// Extract resource data
+		// Extract resource data and build internal ID for deduplication
 		data := extractResourceData(u)
+		id := buildResourceID(u)
 
 		// Queue the change (non-blocking with select to handle full queue)
 		change := &ResourceChange{
 			Action: ActionUpsert,
 			Data:   data,
-			ID:     data.ID,
+			ID:     id,
 		}
 
 		if trySendChange(state, change) {
-			logger.V(2).Info("Queued resource add", "id", data.ID)
+			logger.V(2).Info("Queued resource add", "id", id)
 		} else {
 			// Queue is full or closed - log and drop (debounce buffer will catch this on resync)
-			logger.V(1).Info("Change queue full or closed, dropping add event", "id", data.ID)
+			logger.V(1).Info("Change queue full or closed, dropping add event", "id", id)
 		}
 	}
 }
@@ -845,8 +860,9 @@ func (r *ResourceSyncReconciler) makeOnUpdate(state *activeConfigState) func(old
 		}
 
 		// Check if there are relevant changes
+		id := buildResourceID(newU)
 		if !hasRelevantChanges(oldU, newU) {
-			logger.V(3).Info("No relevant changes detected", "id", buildResourceID(newU))
+			logger.V(3).Info("No relevant changes detected", "id", id)
 			return
 		}
 
@@ -857,14 +873,14 @@ func (r *ResourceSyncReconciler) makeOnUpdate(state *activeConfigState) func(old
 		change := &ResourceChange{
 			Action: ActionUpsert,
 			Data:   data,
-			ID:     data.ID,
+			ID:     id,
 		}
 
 		if trySendChange(state, change) {
-			logger.V(2).Info("Queued resource update", "id", data.ID)
+			logger.V(2).Info("Queued resource update", "id", id)
 		} else {
 			// Queue is full or closed - log and drop
-			logger.V(1).Info("Change queue full or closed, dropping update event", "id", data.ID)
+			logger.V(1).Info("Change queue full or closed, dropping update event", "id", id)
 		}
 	}
 }
@@ -893,14 +909,23 @@ func (r *ResourceSyncReconciler) makeOnDelete(state *activeConfigState) func(obj
 			return
 		}
 
-		// Build the resource ID for deletion
+		// Build the resource ID for internal deduplication
 		id := buildResourceID(u)
+
+		// Build the identifier for MCP to construct the ID
+		deleteIdentifier := &ResourceIdentifier{
+			Namespace:  u.GetNamespace(),
+			Name:       u.GetName(),
+			Kind:       u.GetKind(),
+			APIVersion: u.GetAPIVersion(),
+		}
 
 		// Queue the deletion
 		change := &ResourceChange{
-			Action: ActionDelete,
-			Data:   nil, // No data needed for deletes
-			ID:     id,
+			Action:           ActionDelete,
+			Data:             nil, // No data needed for deletes
+			ID:               id,
+			DeleteIdentifier: deleteIdentifier,
 		}
 
 		if trySendChange(state, change) {
