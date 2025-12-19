@@ -1,7 +1,8 @@
 # PRD #28: Resource Visibility and Status Tracking
 
 **GitHub Issue**: [#28](https://github.com/vfarcic/dot-ai-controller/issues/28)
-**Status**: In Progress
+**Status**: Complete (Phase 1) - Phase 2 deferred to dot-ai repository
+**Completed**: 2025-12-19
 **Priority**: High
 **Created**: 2025-12-13
 
@@ -828,16 +829,18 @@ resourceSync:
   - Created `docs/resource-sync-guide.md` documentation
   - Updated `docs/setup-guide.md` with ResourceSyncConfig CRD
 
-### Phase 2: MCP Integration (dot-ai) - Tracked in Separate PRD
+### Phase 2: MCP Integration (dot-ai) - Deferred to dot-ai Repository
 
-- [ ] **M7: Resource sync endpoint**
+> **Note**: Phase 2 milestones will be tracked in a separate PRD in the [dot-ai repository](https://github.com/vfarcic/dot-ai). The controller implementation (Phase 1) is complete and ready to receive MCP endpoint integration.
+
+- [ ] **M7: Resource sync endpoint** (Deferred to dot-ai PRD)
   - HTTP endpoint to receive resource data from controller
   - Embedding generation for resources
   - Qdrant upsert/delete operations
   - Diff logic for resync: insert new, update changed, delete missing
   - Idempotent delete handling (ignore not-found errors)
 
-- [ ] **M8: Query tools**
+- [ ] **M8: Query tools** (Deferred to dot-ai PRD)
   - `search-resources` semantic search tool
   - `query-resources` structured query tool
   - On-demand resource detail fetching (call Kubernetes API for full spec/describe)
@@ -930,6 +933,7 @@ resourceSync:
 | 2025-12-18 | **M4 Complete**: Initial sync and periodic resync. Added `listAllResources()` to iterate informer caches, `performResync()` to send full state to MCP, `performInitialSync()` for startup sync after cache sync, and `periodicResyncLoop()` goroutine for configurable periodic resyncs. Status updates include `LastResyncTime`, `TotalResourcesSynced`, `SyncErrors`. Unit tests added with mock informers (74.8% coverage). |
 | 2025-12-19 | **M5 Complete**: Configuration and Helm chart. Added `ResourceSyncConfig` CRD to `charts/dot-ai-controller/templates/`. Updated `manager-role.yaml` with resourcesyncconfigs RBAC. Follows same pattern as RemediationPolicy - CRD-based config, users create CR after install. All tests pass (74.8% coverage). |
 | 2025-12-19 | **M6 Complete / Phase 1 Done**: Fixed critical issues blocking e2e tests: (1) Added ResourceSyncConfig CRD to `config/crd/kustomization.yaml`, (2) Registered `ResourceSyncReconciler` in `cmd/main.go`. All 19 e2e tests now pass. Commented out ResourceSyncConfig docs until MCP endpoint is implemented (Phase 2). |
+| 2025-12-19 | **PRD Complete (Phase 1)**: Phase 1 (Controller) fully implemented. Phase 2 (MCP Integration) deferred to dot-ai repository PRD. PR created and merged. |
 
 ---
 
