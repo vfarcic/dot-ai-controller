@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-resource-sync-server
+  namespace: e2e-tests
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-resource-sync-server
+  template:
+    metadata:
+      labels:
+        app: mock-resource-sync-server
+    spec:
+      containers:
+      - name: mock-server
+        image: busybox:latest
+        ports:
+        - containerPort: 8080
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          cat > /tmp/server.sh << 'EOF'
+          #!/bin/sh
+          echo "Starting mock resource sync server on port 8080..."
+          REQUEST_COUNT=0
+          while true; do
+            REQUEST_COUNT=$((REQUEST_COUNT + 1))
+            # Return success response matching MCP's RestApiResponse pattern
+            RESPONSE='{"success":true,"data":{"upserted":5,"deleted":0},"meta":{"timestamp":"2025-12-19T10:00:00Z","requestId":"mock-'$REQUEST_COUNT'","version":"1.0.0"}}'
+            CONTENT_LENGTH=$(echo -n "$RESPONSE" | wc -c)
+            echo -e "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: $CONTENT_LENGTH\r\n\r\n$RESPONSE" | nc -l -p 8080 || break
+          done
+          EOF
+          chmod +x /tmp/server.sh
+          /tmp/server.sh
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-resource-sync-server
+  namespace: e2e-tests
+spec:
+  selector:
+    app: mock-resource-sync-server
+  ports:
+  - port: 8080
+    targetPort: 8080

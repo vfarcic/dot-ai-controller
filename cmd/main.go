@@ -227,6 +227,18 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Solution")
 		os.Exit(1)
 	}
+
+	if err := (&controller.ResourceSyncReconciler{
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		Recorder:            mgr.GetEventRecorderFor("dot-ai-controller"),
+		RestConfig:          mgr.GetConfig(),
+		HttpClient:          httpClient,
+		AuthSecretNamespace: "default",
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ResourceSyncConfig")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {

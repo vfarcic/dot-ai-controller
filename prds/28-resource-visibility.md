@@ -821,11 +821,12 @@ resourceSync:
   - Configuration via CRD (same pattern as RemediationPolicy) - no Helm values needed
   - Users create `ResourceSyncConfig` CR after install to enable feature
 
-- [ ] **M6: Testing and documentation**
-  - Unit tests for change detection, debounce buffer
+- [x] **M6: Testing and documentation**
+  - Unit tests for change detection, debounce buffer (74.8% coverage)
   - Integration tests with envtest
-  - E2E tests with Kind cluster and mock MCP
-  - Update Helm chart documentation
+  - E2E tests with Kind cluster and mock resource sync server
+  - Created `docs/resource-sync-guide.md` documentation
+  - Updated `docs/setup-guide.md` with ResourceSyncConfig CRD
 
 ### Phase 2: MCP Integration (dot-ai) - Tracked in Separate PRD
 
@@ -840,6 +841,7 @@ resourceSync:
   - `search-resources` semantic search tool
   - `query-resources` structured query tool
   - On-demand resource detail fetching (call Kubernetes API for full spec/describe)
+  - Uncomment ResourceSyncConfig references in `docs/setup-guide.md` (3 TODO comments)
 
 ### Future: Fleet Expansion (Separate PRD)
 
@@ -927,6 +929,7 @@ resourceSync:
 | 2025-12-18 | **M3 Complete**: Debounce buffer and MCP client. Created `resourcesync_mcp.go` (MCP client with retry logic, request/response types) and `resourcesync_debounce.go` (debounce buffer with configurable window, last-state-wins, metrics). Integrated with controller startup. Safe channel closure handling. Unit tests added (77.5% coverage). |
 | 2025-12-18 | **M4 Complete**: Initial sync and periodic resync. Added `listAllResources()` to iterate informer caches, `performResync()` to send full state to MCP, `performInitialSync()` for startup sync after cache sync, and `periodicResyncLoop()` goroutine for configurable periodic resyncs. Status updates include `LastResyncTime`, `TotalResourcesSynced`, `SyncErrors`. Unit tests added with mock informers (74.8% coverage). |
 | 2025-12-19 | **M5 Complete**: Configuration and Helm chart. Added `ResourceSyncConfig` CRD to `charts/dot-ai-controller/templates/`. Updated `manager-role.yaml` with resourcesyncconfigs RBAC. Follows same pattern as RemediationPolicy - CRD-based config, users create CR after install. All tests pass (74.8% coverage). |
+| 2025-12-19 | **M6 Complete / Phase 1 Done**: Fixed critical issues blocking e2e tests: (1) Added ResourceSyncConfig CRD to `config/crd/kustomization.yaml`, (2) Registered `ResourceSyncReconciler` in `cmd/main.go`. All 19 e2e tests now pass. Commented out ResourceSyncConfig docs until MCP endpoint is implemented (Phase 2). |
 
 ---
 
