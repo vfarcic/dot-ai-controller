@@ -1,10 +1,10 @@
 # DevOps AI Toolkit Controller
 
-A Kubernetes controller that provides resource tracking and event-driven remediation capabilities.
+A Kubernetes controller that provides resource tracking, event-driven remediation, and resource visibility capabilities.
 
 ## Features
 
-The DevOps AI Toolkit Controller provides two main capabilities:
+The DevOps AI Toolkit Controller provides three main capabilities:
 
 ### 1. Solution CRD - Resource Tracking
 
@@ -35,6 +35,20 @@ Monitor Kubernetes events and automatically remediate issues using the [DevOps A
 
 👉 **[Remediation Guide](docs/remediation-guide.md)** - Complete guide to event remediation
 
+### 3. ResourceSyncConfig CRD - Resource Visibility
+
+Enable semantic search and resource discovery across your cluster:
+
+- **Resource Discovery**: Automatically discovers all resource types in your cluster
+- **Change Tracking**: Watches for resource changes (create, update, delete)
+- **Semantic Search**: Syncs resource metadata to MCP for natural language queries
+- **Debounced Sync**: Batches changes to reduce API calls
+- **Periodic Resync**: Full state sync catches any missed events
+
+**Requires** [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai) for semantic search capabilities.
+
+👉 **[Resource Sync Guide](docs/resource-sync-guide.md)** - Complete guide to resource visibility
+
 ## Quick Start
 
 > **Note**: If you're using [DevOps AI Toolkit (dot-ai)](https://github.com/vfarcic/dot-ai), the controller is automatically installed into your cluster. Skip to step 2.
@@ -52,7 +66,7 @@ helm install dot-ai-controller oci://ghcr.io/vfarcic/dot-ai-controller/charts/do
   --wait
 ```
 
-This installs both CRDs (Solution and RemediationPolicy) and the controller.
+This installs all three CRDs (Solution, RemediationPolicy, and ResourceSyncConfig) and the controller.
 
 👉 **[Setup Guide](docs/setup-guide.md)** - Complete installation instructions
 
@@ -108,11 +122,32 @@ EOF
 
 See the [Remediation Guide](docs/remediation-guide.md) for complete examples, configuration options, and best practices.
 
+**For Resource Visibility:**
+
+First, install the [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai), then:
+
+```bash
+# Create a ResourceSyncConfig to enable semantic search
+kubectl apply --filename - <<'EOF'
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: ResourceSyncConfig
+metadata:
+  name: default-sync
+spec:
+  mcpEndpoint: http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/resources/sync
+  debounceWindowSeconds: 10
+  resyncIntervalMinutes: 60
+EOF
+```
+
+See the [Resource Sync Guide](docs/resource-sync-guide.md) for complete examples and semantic search usage.
+
 ## Documentation
 
 - **[Setup Guide](docs/setup-guide.md)** - Installation and prerequisites
-- **[Remediation Guide](docs/remediation-guide.md)** - Event-driven remediation
 - **[Solution Guide](docs/solution-guide.md)** - Resource tracking and lifecycle management
+- **[Remediation Guide](docs/remediation-guide.md)** - Event-driven remediation
+- **[Resource Sync Guide](docs/resource-sync-guide.md)** - Resource visibility and semantic search
 - **[Troubleshooting Guide](docs/troubleshooting.md)** - Common issues and solutions
 
 ## Architecture
@@ -144,6 +179,7 @@ See the [Remediation Guide](docs/remediation-guide.md) for complete examples, co
 │  │  • Manages ownerReferences           │          │
 │  │  • Tracks resource health            │          │
 │  │  • Processes events (RemediationPolicy) │       │
+│  │  • Syncs resources to MCP (ResourceSync) │      │
 │  └──────────────────────────────────────┘          │
 │                                                     │
 └─────────────────────────────────────────────────────┘

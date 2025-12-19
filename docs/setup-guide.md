@@ -27,9 +27,10 @@ kubectl cluster-info
 
 ## Install Controller
 
-The controller provides two features:
+The controller provides three features:
 - **Solution CRD**: Resource tracking and lifecycle management (standalone)
 - **RemediationPolicy CRD**: Event-driven remediation (requires [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai))
+- **ResourceSyncConfig CRD**: Resource visibility and semantic search (requires [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai))
 
 ### Install via Helm
 
@@ -46,8 +47,9 @@ helm install dot-ai-controller oci://ghcr.io/vfarcic/dot-ai-controller/charts/do
 
 This installs:
 - Controller deployment
-- RemediationPolicy CRD
 - Solution CRD
+- RemediationPolicy CRD
+- ResourceSyncConfig CRD
 - RBAC permissions
 
 ### Verify Installation
@@ -63,26 +65,30 @@ kubectl logs --selector app.kubernetes.io/name=dot-ai-controller --namespace dot
 kubectl get crds | grep dot-ai.devopstoolkit.live
 ```
 
-You should see both CRDs:
+You should see all three CRDs:
 ```
 remediationpolicies.dot-ai.devopstoolkit.live
+resourcesyncconfigs.dot-ai.devopstoolkit.live
 solutions.dot-ai.devopstoolkit.live
 ```
 
 ## Optional: Install DevOps AI Toolkit MCP
 
-**Only required for RemediationPolicy features.** If you're only using the Solution CRD, skip this step.
+**Required for RemediationPolicy and ResourceSyncConfig features.** If you're only using the Solution CRD, skip this step.
 
 For MCP installation instructions, see the [DevOps AI Toolkit documentation](https://github.com/vfarcic/dot-ai).
 
-The controller expects the MCP service at: `http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/tools/remediate`
+The controller expects the MCP service at:
+- RemediationPolicy: `http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/tools/remediate`
+- ResourceSyncConfig: `http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/resources/sync`
 
 ## What's Next
 
 Choose which features you want to use:
 
-- **RemediationPolicy CRD**: [Remediation Guide](remediation-guide.md) - Event-driven remediation (requires MCP)
 - **Solution CRD**: [Solution Guide](solution-guide.md) - Resource tracking and lifecycle management (works standalone, no MCP needed)
+- **RemediationPolicy CRD**: [Remediation Guide](remediation-guide.md) - Event-driven remediation (requires MCP)
+- **ResourceSyncConfig CRD**: [Resource Sync Guide](resource-sync-guide.md) - Resource visibility and semantic search (requires MCP)
 
 ## Cleanup
 

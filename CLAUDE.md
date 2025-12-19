@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DevOps AI Toolkit Controller - A Kubernetes controller built with Kubebuilder v4.7.1. The controller provides two main capabilities:
+DevOps AI Toolkit Controller - A Kubernetes controller built with Kubebuilder v4.7.1. The controller provides three main capabilities:
 
 1. **Solution CRD** (`dot-ai.devopstoolkit.live/v1alpha1`): Resource tracking and lifecycle management
    - Groups related Kubernetes resources as logical solutions
@@ -22,6 +22,14 @@ DevOps AI Toolkit Controller - A Kubernetes controller built with Kubebuilder v4
    - Integrates with DevOps AI Toolkit MCP for AI-powered remediation
    - Supports automatic and manual modes
    - Includes rate limiting and Slack notifications
+   - Requires external MCP endpoint
+
+3. **ResourceSyncConfig CRD** (`dot-ai.devopstoolkit.live/v1alpha1`): Resource visibility and semantic search
+   - Discovers all resource types in cluster via Discovery API
+   - Watches for resource changes (create, update, delete)
+   - Syncs resource metadata to MCP for semantic search
+   - Debounces changes to reduce API calls
+   - Periodic full resync catches missed events
    - Requires external MCP endpoint
 
 ## Development Commands
@@ -112,10 +120,14 @@ make docker-buildx IMG=<registry>/controller:tag
 - **API Definitions**: `api/v1alpha1/`
   - `solution_types.go` - Solution CRD schema for resource tracking
   - `remediationpolicy_types.go` - RemediationPolicy CRD schema for event remediation
+  - `resourcesyncconfig_types.go` - ResourceSyncConfig CRD schema for resource visibility
 - **Controllers**: `internal/controller/`
   - `solution_controller.go` - Manages Solution CRs and ownerReferences
   - `remediationpolicy_controller.go` - Watches events and triggers remediation
-- **Main Entry**: `cmd/main.go` - Sets up manager and registers both controllers
+  - `resourcesync_controller.go` - Syncs resource metadata to MCP for semantic search
+  - `resourcesync_mcp.go` - MCP client for resource sync
+  - `resourcesync_debounce.go` - Debounce buffer for batching changes
+- **Main Entry**: `cmd/main.go` - Sets up manager and registers all three controllers
 - **Configuration**: `config/` directory contains Kustomize manifests
   - `config/crd/bases/` - Generated CRD definitions
   - `config/manager/` - Controller deployment manifests
@@ -136,9 +148,17 @@ make docker-buildx IMG=<registry>/controller:tag
 - HTTP client calls external MCP endpoint for remediation analysis
 - Supports per-selector overrides for mode, confidence, and risk level
 
+**ResourceSync Controller:**
+- Discovers all resource types via Kubernetes Discovery API
+- Creates dynamic informers for each resource type
+- Detects create/update/delete events on all resources
+- Debounces changes in configurable time window before syncing
+- Syncs resource metadata (not status/spec) to MCP for semantic search
+- Periodic full resync to catch any missed events
+
 **Common Patterns:**
 - **RBAC Markers**: Use `+kubebuilder:rbac` comments to generate RBAC manifests
-- **Status Updates**: Both CRDs include Status subresource for operational state
+- **Status Updates**: All three CRDs include Status subresource for operational state
 - **Generated Code**: DeepCopy methods and CRD manifests are auto-generated - never edit manually
 - **Structured Logging**: Use `logf.FromContext(ctx)` for consistent logging
 
@@ -187,7 +207,7 @@ Save test output to `./tmp/test-output.txt` for review.
 
 ```
 dot-ai-controller/
-├── api/v1alpha1/           # CRD API definitions (Solution, RemediationPolicy)
+├── api/v1alpha1/           # CRD API definitions (Solution, RemediationPolicy, ResourceSyncConfig)
 ├── internal/controller/    # Controller implementations
 ├── cmd/main.go            # Application entry point
 ├── config/                # Kustomize manifests (CRDs, RBAC, deployment)
@@ -209,6 +229,6 @@ dot-ai-controller/
 - **ownerReferences**: Solution controller sets these automatically - don't manually manage them
 - **Event Deduplication**: RemediationPolicy controller tracks processed events in-memory - state is lost on restart
 - **Rate Limiting**: Configured per policy+object+reason to prevent storms while allowing different objects to be processed
-- **External Dependencies**: RemediationPolicy requires MCP endpoint; Solution CRD works standalone
+- **External Dependencies**: RemediationPolicy and ResourceSyncConfig require MCP endpoint; Solution CRD works standalone
 - **Helm Chart**: Located in `charts/dot-ai-controller/` and published as OCI artifact to GHCR
 - **Documentation**: User-facing docs in `docs/`, PRDs track feature development in `prds/`

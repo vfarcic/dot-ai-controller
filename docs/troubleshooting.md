@@ -145,6 +145,70 @@ kubectl describe remediationpolicies --namespace dot-ai
 - Network connectivity to Anthropic services
 - Malformed event data
 
+### 7. ResourceSyncConfig Not Syncing
+
+**Symptoms:**
+```bash
+# ResourceSyncConfig status shows syncErrors or not active
+kubectl get resourcesyncconfigs --output yaml
+```
+
+**Diagnosis:**
+```bash
+# Check ResourceSyncConfig status
+kubectl get resourcesyncconfigs --output jsonpath='{.items[*].status}'
+
+# Check controller logs for sync errors
+kubectl logs --selector app.kubernetes.io/name=dot-ai-controller --namespace dot-ai | grep -i "resourcesync\|sync"
+
+# Verify MCP endpoint is reachable
+kubectl exec --namespace dot-ai deployment/dot-ai-controller-manager -- \
+  curl -v http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/resources/sync
+```
+
+**Common Causes:**
+- MCP resource sync endpoint not available
+- Wrong `mcpEndpoint` URL in ResourceSyncConfig
+- Network policies blocking communication
+- RBAC permissions missing for resource discovery
+
+**Solution:**
+```bash
+# Verify the MCP endpoint URL is correct
+kubectl get resourcesyncconfigs --output jsonpath='{.items[*].spec.mcpEndpoint}'
+
+# Check if watcher is active
+kubectl get resourcesyncconfigs --output jsonpath='{.items[*].status.active}'
+
+# Check watched resource types count
+kubectl get resourcesyncconfigs --output jsonpath='{.items[*].status.watchedResourceTypes}'
+```
+
+### 8. ResourceSync High Traffic or Performance Issues
+
+**Symptoms:**
+- High CPU/memory usage on controller
+- Frequent sync requests to MCP
+- Slow cluster performance
+
+**Diagnosis:**
+```bash
+# Check sync frequency and resource counts
+kubectl get resourcesyncconfigs --output yaml | grep -A5 status
+
+# Check debounce and resync settings
+kubectl get resourcesyncconfigs --output yaml | grep -E "debounceWindowSeconds|resyncIntervalMinutes"
+```
+
+**Solution:**
+
+Adjust debounce and resync intervals in your ResourceSyncConfig:
+```yaml
+spec:
+  debounceWindowSeconds: 30   # Increase to batch more changes
+  resyncIntervalMinutes: 120  # Increase to reduce full resyncs
+```
+
 ## Getting Help
 
 ### Collect Diagnostic Information
@@ -161,6 +225,9 @@ kubectl logs --namespace dot-ai --selector app.kubernetes.io/name=dot-ai --tail 
 
 # RemediationPolicy configuration
 kubectl get remediationpolicies --namespace dot-ai --output yaml
+
+# ResourceSyncConfig configuration and status
+kubectl get resourcesyncconfigs --all-namespaces --output yaml
 
 # Recent events
 kubectl get events --namespace dot-ai --sort-by='.lastTimestamp' --field-selector type=Warning
