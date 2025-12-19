@@ -1,14 +1,18 @@
-// resourcesync_controller.go implements resource visibility and status tracking.
+// resourcesync_controller.go implements resource visibility for semantic search.
 // This controller watches ResourceSyncConfig CRs and, when one exists, watches
-// all resources in the cluster and syncs metadata + status to the MCP server
-// for semantic search capabilities.
+// all resources in the cluster and syncs metadata (labels, annotations) to the
+// MCP server for semantic search capabilities.
+//
+// Note: Status and spec are NOT synced - they are fetched on-demand from the
+// Kubernetes API when needed. This reduces sync traffic since labels rarely
+// change after resource creation.
 //
 // Key responsibilities:
 // - Watch ResourceSyncConfig CRs to enable/disable resource syncing
 // - Discover all resource types via the Discovery API
 // - Watch CRDs for immediate detection of new/removed custom resources
 // - Create dynamic informers for each discovered GVR
-// - Detect changes to resources (labels, status)
+// - Detect changes to resources (labels only - status changes are ignored)
 // - Batch and send changes to MCP endpoint
 // - Periodic resync for eventual consistency
 package controller
@@ -68,8 +72,6 @@ type ResourceData struct {
 	Labels map[string]string `json:"labels,omitempty"`
 	// Annotations from the resource (selected ones, not all)
 	Annotations map[string]string `json:"annotations,omitempty"`
-	// Status is the complete status object from the resource
-	Status interface{} `json:"status,omitempty"`
 	// CreatedAt is when the resource was created
 	CreatedAt time.Time `json:"createdAt"`
 	// UpdatedAt is when this data was last updated (now)
@@ -753,9 +755,6 @@ func extractResourceData(obj *unstructured.Unstructured) *ResourceData {
 		}
 	}
 
-	// Get status (complete, including timestamps)
-	status := obj.Object["status"]
-
 	return &ResourceData{
 		ID:          buildResourceID(obj),
 		Namespace:   obj.GetNamespace(),
@@ -764,24 +763,16 @@ func extractResourceData(obj *unstructured.Unstructured) *ResourceData {
 		APIVersion:  obj.GetAPIVersion(),
 		Labels:      labels,
 		Annotations: annotations,
-		Status:      status,
 		CreatedAt:   obj.GetCreationTimestamp().Time,
 		UpdatedAt:   time.Now(),
 	}
 }
 
 // hasRelevantChanges checks if the resource has changes worth syncing
-// Compares labels and complete status using deep equality
+// Only compares labels - status is fetched on-demand from K8s API
 func hasRelevantChanges(oldObj, newObj *unstructured.Unstructured) bool {
-	// Compare labels
-	if !reflect.DeepEqual(oldObj.GetLabels(), newObj.GetLabels()) {
-		return true
-	}
-
-	// Compare complete status (including timestamps)
-	oldStatus := oldObj.Object["status"]
-	newStatus := newObj.Object["status"]
-	return !reflect.DeepEqual(oldStatus, newStatus)
+	// Compare labels only - status changes don't trigger sync
+	return !reflect.DeepEqual(oldObj.GetLabels(), newObj.GetLabels())
 }
 
 // Event handler factories

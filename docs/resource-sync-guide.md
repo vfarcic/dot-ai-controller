@@ -105,29 +105,43 @@ kubectl get resourcesyncconfig default-sync -o yaml
 
 ### What Gets Synced
 
-For each resource, the following is synced to MCP:
+For each resource, the following metadata is synced to MCP:
 - Kind, APIVersion, Name, Namespace
-- Labels and select annotations
-- Complete status object (conditions, replica counts, etc.)
+- Labels and select annotations (description-related)
 - Creation and update timestamps
+
+This metadata enables semantic search to discover resources (e.g., "find all databases", "list deployments in production").
 
 ### What's NOT Synced
 
-- Full resource spec (fetched on-demand from Kubernetes when needed)
+The following are **not** synced to reduce traffic and storage:
+- **Resource status** - fetched on-demand from Kubernetes API when needed
+- **Resource spec** - fetched on-demand from Kubernetes API when needed
 - High-volume resources: Events, Leases, EndpointSlices
 - Large annotations like `kubectl.kubernetes.io/last-applied-configuration`
+
+This design means resource discovery happens via semantic search in Qdrant, while current state (status/spec) is always fetched fresh from the Kubernetes API.
 
 ## Semantic Search
 
 Once resources are synced, you can search using natural language through MCP:
 
 ```
-"show me all failing pods"
-"what databases are running?"
+"which databases are we running?"
 "list deployments in production namespace"
+"find all services related to payments"
 ```
 
 MCP uses semantic embeddings to understand intent, so you don't need to know exact resource kinds or field names.
+
+### Query Flow
+
+For questions about resource state (e.g., "what's the status of my databases"):
+1. **Discovery**: Semantic search finds relevant resources in Qdrant
+2. **Fetch**: Current status is fetched from Kubernetes API
+3. **Response**: AI synthesizes the answer with fresh data
+
+This ensures status information is always current, not potentially stale from a sync lag.
 
 ## Example: Full Configuration
 

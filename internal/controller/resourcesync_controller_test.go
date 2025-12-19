@@ -920,56 +920,6 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(data.Annotations).To(HaveKey("description"))
 		})
 
-		It("should extract complete status", func() {
-			obj := &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"apiVersion": "apps/v1",
-					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
-						"name":      "nginx",
-						"namespace": "default",
-					},
-					"status": map[string]interface{}{
-						"availableReplicas": int64(3),
-						"readyReplicas":     int64(3),
-						"replicas":          int64(3),
-						"conditions": []interface{}{
-							map[string]interface{}{
-								"type":   "Available",
-								"status": "True",
-								"reason": "MinimumReplicasAvailable",
-							},
-						},
-					},
-				},
-			}
-
-			data := extractResourceData(obj)
-			Expect(data.Status).NotTo(BeNil())
-
-			status, ok := data.Status.(map[string]interface{})
-			Expect(ok).To(BeTrue())
-			Expect(status["availableReplicas"]).To(Equal(int64(3)))
-			Expect(status["readyReplicas"]).To(Equal(int64(3)))
-			Expect(status["conditions"]).NotTo(BeNil())
-		})
-
-		It("should handle missing status", func() {
-			obj := &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"apiVersion": "v1",
-					"kind":       "ConfigMap",
-					"metadata": map[string]interface{}{
-						"name":      "my-config",
-						"namespace": "default",
-					},
-				},
-			}
-
-			data := extractResourceData(obj)
-			Expect(data.Status).To(BeNil())
-		})
-
 		It("should set UpdatedAt to current time", func() {
 			obj := &unstructured.Unstructured{
 				Object: map[string]interface{}{
@@ -1111,7 +1061,7 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(hasRelevantChanges(oldObj, newObj)).To(BeTrue())
 		})
 
-		It("should detect status changes", func() {
+		It("should NOT detect status changes (status not synced)", func() {
 			oldObj := &unstructured.Unstructured{
 				Object: map[string]interface{}{
 					"apiVersion": "apps/v1",
@@ -1122,7 +1072,6 @@ var _ = Describe("ResourceSync Controller", func() {
 					},
 					"status": map[string]interface{}{
 						"availableReplicas": int64(2),
-						"readyReplicas":     int64(2),
 					},
 				},
 			}
@@ -1135,54 +1084,12 @@ var _ = Describe("ResourceSync Controller", func() {
 						"namespace": "default",
 					},
 					"status": map[string]interface{}{
-						"availableReplicas": int64(3), // Changed
-						"readyReplicas":     int64(3), // Changed
+						"availableReplicas": int64(3), // Changed - but should NOT trigger sync
 					},
 				},
 			}
 
-			Expect(hasRelevantChanges(oldObj, newObj)).To(BeTrue())
-		})
-
-		It("should detect condition changes", func() {
-			oldObj := &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"apiVersion": "apps/v1",
-					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
-						"name":      "nginx",
-						"namespace": "default",
-					},
-					"status": map[string]interface{}{
-						"conditions": []interface{}{
-							map[string]interface{}{
-								"type":   "Available",
-								"status": "False",
-							},
-						},
-					},
-				},
-			}
-			newObj := &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"apiVersion": "apps/v1",
-					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
-						"name":      "nginx",
-						"namespace": "default",
-					},
-					"status": map[string]interface{}{
-						"conditions": []interface{}{
-							map[string]interface{}{
-								"type":   "Available",
-								"status": "True", // Changed
-							},
-						},
-					},
-				},
-			}
-
-			Expect(hasRelevantChanges(oldObj, newObj)).To(BeTrue())
+			Expect(hasRelevantChanges(oldObj, newObj)).To(BeFalse())
 		})
 
 		It("should return false when nothing changed", func() {
@@ -1359,7 +1266,7 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(hasRelevantChanges(oldObj, newObj)).To(BeFalse())
 		})
 
-		It("should detect when status added to previously nil status", func() {
+		It("should NOT detect when status added to previously nil status (status not synced)", func() {
 			oldObj := &unstructured.Unstructured{
 				Object: map[string]interface{}{
 					"apiVersion": "v1",
@@ -1384,7 +1291,8 @@ var _ = Describe("ResourceSync Controller", func() {
 				},
 			}
 
-			Expect(hasRelevantChanges(oldObj, newObj)).To(BeTrue())
+			// Status changes should NOT trigger sync - only labels matter
+			Expect(hasRelevantChanges(oldObj, newObj)).To(BeFalse())
 		})
 	})
 
@@ -1445,7 +1353,7 @@ var _ = Describe("ResourceSync Controller", func() {
 		})
 
 		Describe("makeOnUpdate", func() {
-			It("should queue upsert when status changes", func() {
+			It("should NOT queue upsert when only status changes (status not synced)", func() {
 				handler := reconciler.makeOnUpdate(state)
 
 				oldObj := &unstructured.Unstructured{
@@ -1470,19 +1378,19 @@ var _ = Describe("ResourceSync Controller", func() {
 							"namespace": "default",
 						},
 						"status": map[string]interface{}{
-							"readyReplicas": int64(3),
+							"readyReplicas": int64(3), // Changed - but should NOT trigger sync
 						},
 					},
 				}
 
 				handler(oldObj, newObj)
 
+				// Status changes should NOT queue anything
 				select {
-				case change := <-state.changeQueue:
-					Expect(change.Action).To(Equal(ActionUpsert))
-					Expect(change.ID).To(Equal("default:apps/v1:Deployment:nginx"))
-				case <-time.After(100 * time.Millisecond):
-					Fail("Expected change to be queued")
+				case <-state.changeQueue:
+					Fail("Should not queue when only status changed")
+				case <-time.After(50 * time.Millisecond):
+					// Expected - no change queued
 				}
 			})
 

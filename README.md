@@ -35,22 +35,6 @@ Monitor Kubernetes events and automatically remediate issues using the [DevOps A
 
 👉 **[Remediation Guide](docs/remediation-guide.md)** - Complete guide to event remediation
 
-<!-- TODO: Uncomment when MCP resource sync endpoint is implemented (PRD #28 Phase 2)
-### 3. ResourceSyncConfig CRD - Resource Visibility
-
-Enable semantic search across all cluster resources:
-
-- **Resource Discovery**: Automatically discovers all resource types in your cluster
-- **Change Tracking**: Watches for resource changes (create, update, delete)
-- **Semantic Search**: Syncs resource metadata to MCP for natural language queries ("show me failing pods", "what databases are running?")
-- **Debounced Sync**: Batches changes to reduce API calls
-- **Periodic Resync**: Full state sync to ensure consistency
-
-**Requires** [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai) for semantic search capabilities.
-
-👉 **[Resource Sync Guide](docs/resource-sync-guide.md)** - Complete guide to resource visibility
--->
-
 ## Quick Start
 
 > **Note**: If you're using [DevOps AI Toolkit (dot-ai)](https://github.com/vfarcic/dot-ai), the controller is automatically installed into your cluster. Skip to step 2.
