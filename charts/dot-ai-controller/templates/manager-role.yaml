@@ -70,6 +70,7 @@ rules:
   - dot-ai.devopstoolkit.live
   resources:
   - remediationpolicies/status
+  - resourcesyncconfigs/status
   - solutions/status
   verbs:
   - get
@@ -78,6 +79,7 @@ rules:
 - apiGroups:
   - dot-ai.devopstoolkit.live
   resources:
+  - resourcesyncconfigs
   - solutions
   verbs:
   - create
@@ -90,6 +92,7 @@ rules:
 - apiGroups:
   - dot-ai.devopstoolkit.live
   resources:
+  - resourcesyncconfigs/finalizers
   - solutions/finalizers
   verbs:
   - update

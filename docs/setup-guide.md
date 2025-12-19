@@ -30,6 +30,9 @@ kubectl cluster-info
 The controller provides two features:
 - **Solution CRD**: Resource tracking and lifecycle management (standalone)
 - **RemediationPolicy CRD**: Event-driven remediation (requires [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai))
+<!-- TODO: Uncomment when MCP resource sync endpoint is implemented (PRD #28 Phase 2)
+- **ResourceSyncConfig CRD**: Resource visibility and semantic search (requires [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai))
+-->
 
 ### Install via Helm
 
@@ -68,6 +71,9 @@ You should see both CRDs:
 remediationpolicies.dot-ai.devopstoolkit.live
 solutions.dot-ai.devopstoolkit.live
 ```
+<!-- TODO: Uncomment when MCP resource sync endpoint is implemented (PRD #28 Phase 2)
+resourcesyncconfigs.dot-ai.devopstoolkit.live
+-->
 
 ## Optional: Install DevOps AI Toolkit MCP
 
@@ -83,6 +89,9 @@ Choose which features you want to use:
 
 - **RemediationPolicy CRD**: [Remediation Guide](remediation-guide.md) - Event-driven remediation (requires MCP)
 - **Solution CRD**: [Solution Guide](solution-guide.md) - Resource tracking and lifecycle management (works standalone, no MCP needed)
+<!-- TODO: Uncomment when MCP resource sync endpoint is implemented (PRD #28 Phase 2)
+- **ResourceSyncConfig CRD**: [Resource Sync Guide](resource-sync-guide.md) - Resource visibility and semantic search (requires MCP)
+-->
 
 ## Cleanup
 

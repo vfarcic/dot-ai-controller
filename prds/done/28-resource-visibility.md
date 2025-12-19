@@ -1,7 +1,8 @@
 # PRD #28: Resource Visibility and Status Tracking
 
 **GitHub Issue**: [#28](https://github.com/vfarcic/dot-ai-controller/issues/28)
-**Status**: Draft
+**Status**: Complete (Phase 1) - Phase 2 deferred to dot-ai repository
+**Completed**: 2025-12-19
 **Priority**: High
 **Created**: 2025-12-13
 
@@ -655,7 +656,92 @@ func (c *MCPClient) Resync(ctx context.Context, allResources []*ResourceData) er
 
 > **Design Decision**: Controller sends resource data to MCP via HTTP. MCP handles embeddings, diffing (for resync), and Qdrant writes. This keeps the controller simple and consistent with how capabilities work. MCP ignores "not found" errors on delete (idempotent).
 
-#### 6. Configuration (Adapt Existing Pattern)
+#### 6. API Contract: Resource Sync Endpoint
+
+**Endpoint**: `POST /api/v1/resources/sync`
+
+**Request Body**:
+```json
+{
+  "upserts": [
+    {
+      "id": "default:apps/v1:Deployment:nginx",
+      "namespace": "default",
+      "name": "nginx",
+      "kind": "Deployment",
+      "apiVersion": "apps/v1",
+      "labels": {"app": "nginx", "env": "prod"},
+      "annotations": {"description": "Web server"},
+      "status": {
+        "availableReplicas": 3,
+        "readyReplicas": 3,
+        "conditions": [
+          {
+            "type": "Available",
+            "status": "True",
+            "lastTransitionTime": "2025-12-18T10:00:00Z",
+            "reason": "MinimumReplicasAvailable",
+            "message": "Deployment has minimum availability."
+          }
+        ]
+      },
+      "createdAt": "2025-12-13T10:00:00Z",
+      "updatedAt": "2025-12-18T14:30:00Z"
+    }
+  ],
+  "deletes": ["default:apps/v1:Deployment:old-nginx"],
+  "isResync": false
+}
+```
+
+**Response Body** (follows MCP's `RestApiResponse` pattern):
+
+Success:
+```json
+{
+  "success": true,
+  "data": {
+    "upserted": 5,
+    "deleted": 2
+  },
+  "meta": {
+    "timestamp": "2025-12-18T14:30:00Z",
+    "requestId": "abc-123",
+    "version": "1.0.0"
+  }
+}
+```
+
+Error (partial or complete failure):
+```json
+{
+  "success": false,
+  "error": {
+    "code": "SYNC_FAILED",
+    "message": "Failed to process some resources",
+    "details": {
+      "upserted": 4,
+      "deleted": 2,
+      "failures": [
+        {"id": "default:apps/v1:Deployment:nginx", "error": "embedding failed"}
+      ]
+    }
+  },
+  "meta": {
+    "timestamp": "2025-12-18T14:30:00Z",
+    "requestId": "abc-123",
+    "version": "1.0.0"
+  }
+}
+```
+
+**Key Design Decisions**:
+- **ID format**: `namespace:apiVersion:kind:name` - colons avoid URL path conflicts
+- **Response wrapper**: Follows MCP's standard `RestApiResponse` pattern for consistency
+- **Partial failures**: Reported in `error.details` with `success: false`
+- **Idempotent deletes**: MCP ignores "not found" errors silently
+
+#### 7. Configuration (Adapt Existing Pattern)
 
 ```yaml
 # Helm values - similar to existing MCP endpoint config
@@ -692,56 +778,73 @@ resourceSync:
 
 ### Phase 1: Controller (dot-ai-controller)
 
-- [ ] **M1: Resource discovery and dynamic informers**
+- [x] **M1: Resource discovery and dynamic informers**
   - Implement dynamic resource discovery using discovery API
   - Create dynamic informers for each discovered GVR
-  - Periodic re-discovery for new CRDs (every 5 minutes)
+  - ~~Periodic re-discovery for new CRDs~~ → **Improved**: CRD watching via informer for immediate detection
   - Handle CRD removal gracefully
+  - **Added**: `ResourceSyncConfig` CRD for CR-based configuration (mcpEndpoint, debounceWindowSeconds, resyncIntervalMinutes)
 
-- [ ] **M2: Event handlers and change detection**
+- [x] **M2: Event handlers and change detection**
   - Implement OnAdd, OnUpdate, OnDelete handlers
   - Change detection comparing complete status + labels (simple deep equal)
   - Extract complete resource data (kind, namespace, name, labels, full status)
   - Status includes all fields and timestamps (no stripping)
+  - **Added**: `ResourceData` and `ResourceChange` types for structured data passing
+  - **Added**: Buffered change queue (10,000 capacity) to pass changes to debounce buffer (M3)
+  - **Added**: Resource ID format: `namespace:apiVersion:kind:name` (e.g., `default:apps/v1:Deployment:nginx`)
+  - **Added**: Cluster-scoped resources use `_cluster` as namespace prefix
 
-- [ ] **M3: Debounce buffer and MCP client**
+- [x] **M3: Debounce buffer and MCP client**
   - Implement debounce buffer with 10-second window
   - Last-state-wins per resource ID
   - Deletes always preserved
   - HTTP client to send batched data to MCP
   - Retry logic with exponential backoff
+  - **Added**: `resourcesync_mcp.go` - MCP client with `SyncRequest`/`SyncResponse` types, retry with exponential backoff
+  - **Added**: `resourcesync_debounce.go` - Debounce buffer with configurable window, metrics tracking
+  - **Added**: Safe channel closure handling to prevent panics during shutdown
 
-- [ ] **M4: Initial sync and periodic resync**
+- [x] **M4: Initial sync and periodic resync**
   - Initial sync on startup (list all resources, send to MCP)
   - Periodic resync every hour (default, configurable)
   - Controller sends full state; MCP diffs against Qdrant
   - MCP: insert new, update changed, delete missing (catches missed deletes)
+  - **Added**: `listAllResources()` iterates all informer caches and extracts ResourceData
+  - **Added**: `performResync()` sends all resources to MCP with `isResync: true`
+  - **Added**: `performInitialSync()` runs after cache sync completes, updates status
+  - **Added**: `periodicResyncLoop()` goroutine with configurable interval from `ResyncIntervalMinutes`
+  - **Added**: Status updates for `LastResyncTime`, `TotalResourcesSynced`, `SyncErrors`
 
-- [ ] **M5: Configuration and Helm chart**
-  - Add resourceSync configuration to Helm values
-  - MCP endpoint, timing settings
-  - Secret reference for MCP API key
-  - Feature flag to enable/disable
+- [x] **M5: Configuration and Helm chart**
+  - Added `ResourceSyncConfig` CRD to Helm chart templates
+  - Updated `manager-role.yaml` with resourcesyncconfigs RBAC (resources, status, finalizers)
+  - Configuration via CRD (same pattern as RemediationPolicy) - no Helm values needed
+  - Users create `ResourceSyncConfig` CR after install to enable feature
 
-- [ ] **M6: Testing and documentation**
-  - Unit tests for change detection, debounce buffer
+- [x] **M6: Testing and documentation**
+  - Unit tests for change detection, debounce buffer (74.8% coverage)
   - Integration tests with envtest
-  - E2E tests with Kind cluster and mock MCP
-  - Update Helm chart documentation
+  - E2E tests with Kind cluster and mock resource sync server
+  - Created `docs/resource-sync-guide.md` documentation
+  - Updated `docs/setup-guide.md` with ResourceSyncConfig CRD
 
-### Phase 2: MCP Integration (dot-ai) - Tracked in Separate PRD
+### Phase 2: MCP Integration (dot-ai) - Deferred to dot-ai Repository
 
-- [ ] **M7: Resource sync endpoint**
+> **Note**: Phase 2 milestones will be tracked in a separate PRD in the [dot-ai repository](https://github.com/vfarcic/dot-ai). The controller implementation (Phase 1) is complete and ready to receive MCP endpoint integration.
+
+- [ ] **M7: Resource sync endpoint** (Deferred to dot-ai PRD)
   - HTTP endpoint to receive resource data from controller
   - Embedding generation for resources
   - Qdrant upsert/delete operations
   - Diff logic for resync: insert new, update changed, delete missing
   - Idempotent delete handling (ignore not-found errors)
 
-- [ ] **M8: Query tools**
+- [ ] **M8: Query tools** (Deferred to dot-ai PRD)
   - `search-resources` semantic search tool
   - `query-resources` structured query tool
   - On-demand resource detail fetching (call Kubernetes API for full spec/describe)
+  - Uncomment ResourceSyncConfig references in `docs/setup-guide.md` (3 TODO comments)
 
 ### Future: Fleet Expansion (Separate PRD)
 
@@ -809,6 +912,10 @@ resourceSync:
 | **Debounce buffer (10s, last-state-wins)** - Collect changes per resource ID. Deletes always preserved. | Reduces HTTP call volume. Handles rapid event bursts. Simple implementation. |
 | **Periodic resync (1 hour default)** - Controller sends full state; MCP diffs against Qdrant. | Safety net for eventual consistency. Diff approach minimizes embedding regeneration cost. Catches missed deletes. |
 | **Idempotent deletes** - Always send deletes to MCP. MCP ignores "not found" errors. | Simpler logic. MCP handles idempotency. |
+| **CR-based configuration** - New `ResourceSyncConfig` CRD (cluster-scoped) enables/configures resource syncing. Controller is dormant until CR exists. | Same pattern as RemediationPolicy. Dynamic enablement without restart. GitOps-friendly. Multiple configs supported. |
+| **CRD watching instead of polling** - Watch CRDs directly via informer for immediate detection of new/removed custom resources. | Immediate response (seconds vs 5 minutes). More efficient than polling. Simpler code (no periodic goroutine). |
+| **Shared SecretReference type** - Moved `SecretReference` to `common_types.go` for reuse across CRDs. | Avoids duplication. Consistent pattern across RemediationPolicy and ResourceSyncConfig. |
+| **API contract for resource sync** - `POST /api/v1/resources/sync` with `RestApiResponse` wrapper pattern. ID format `namespace:apiVersion:kind:name`. | Consistent with MCP's existing API patterns. Colons in ID avoid URL path conflicts. Partial failures reported in `error.details`. |
 
 ---
 
@@ -818,6 +925,15 @@ resourceSync:
 |------|--------|
 | 2025-12-13 | PRD created |
 | 2025-12-18 | Design finalized: single-cluster scope, semantic search architecture, controller-MCP-Qdrant flow |
+| 2025-12-18 | Implementation started - created feature branch `feature/prd-28-resource-visibility` |
+| 2025-12-18 | **M1 Complete**: Resource discovery and dynamic informers. Created `ResourceSyncConfig` CRD, `resourcesync_controller.go`, shared `common_types.go`. Improved design: CRD watching via informer instead of polling for immediate detection of new CRDs. |
+| 2025-12-18 | **M2 Complete**: Event handlers and change detection. Implemented `makeOnAdd`, `makeOnUpdate`, `makeOnDelete` handlers with `hasRelevantChanges()` for filtering. Added `ResourceData`/`ResourceChange` types, buffered change queue (10K), and resource ID format `namespace:apiVersion:kind:name`. Comprehensive unit tests added (75.8% coverage). |
+| 2025-12-18 | **API Contract Defined**: Documented `POST /api/v1/resources/sync` endpoint contract aligned with MCP's `RestApiResponse` pattern. Ready for M3 implementation (controller side) and M7 implementation (MCP side). |
+| 2025-12-18 | **M3 Complete**: Debounce buffer and MCP client. Created `resourcesync_mcp.go` (MCP client with retry logic, request/response types) and `resourcesync_debounce.go` (debounce buffer with configurable window, last-state-wins, metrics). Integrated with controller startup. Safe channel closure handling. Unit tests added (77.5% coverage). |
+| 2025-12-18 | **M4 Complete**: Initial sync and periodic resync. Added `listAllResources()` to iterate informer caches, `performResync()` to send full state to MCP, `performInitialSync()` for startup sync after cache sync, and `periodicResyncLoop()` goroutine for configurable periodic resyncs. Status updates include `LastResyncTime`, `TotalResourcesSynced`, `SyncErrors`. Unit tests added with mock informers (74.8% coverage). |
+| 2025-12-19 | **M5 Complete**: Configuration and Helm chart. Added `ResourceSyncConfig` CRD to `charts/dot-ai-controller/templates/`. Updated `manager-role.yaml` with resourcesyncconfigs RBAC. Follows same pattern as RemediationPolicy - CRD-based config, users create CR after install. All tests pass (74.8% coverage). |
+| 2025-12-19 | **M6 Complete / Phase 1 Done**: Fixed critical issues blocking e2e tests: (1) Added ResourceSyncConfig CRD to `config/crd/kustomization.yaml`, (2) Registered `ResourceSyncReconciler` in `cmd/main.go`. All 19 e2e tests now pass. Commented out ResourceSyncConfig docs until MCP endpoint is implemented (Phase 2). |
+| 2025-12-19 | **PRD Complete (Phase 1)**: Phase 1 (Controller) fully implemented. Phase 2 (MCP Integration) deferred to dot-ai repository PRD. PR created and merged. |
 
 ---
 

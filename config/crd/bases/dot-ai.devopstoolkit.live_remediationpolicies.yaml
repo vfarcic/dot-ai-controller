@@ -142,7 +142,7 @@ spec:
                     description: Key within the secret containing the value
                     type: string
                   name:
-                    description: Name of the secret in the same namespace as the RemediationPolicy
+                    description: Name of the secret in the same namespace as the resource
                     type: string
                 required:
                 - key
@@ -197,7 +197,7 @@ spec:
                             type: string
                           name:
                             description: Name of the secret in the same namespace
-                              as the RemediationPolicy
+                              as the resource
                             type: string
                         required:
                         - key
@@ -238,7 +238,7 @@ spec:
                             type: string
                           name:
                             description: Name of the secret in the same namespace
-                              as the RemediationPolicy
+                              as the resource
                             type: string
                         required:
                         - key
