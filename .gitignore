@@ -14,3 +14,5 @@ cover.out
 # Kubernetes test environment
 testbin/
 kind.yaml
+
+/gke_gcloud_auth_plugin_cache
