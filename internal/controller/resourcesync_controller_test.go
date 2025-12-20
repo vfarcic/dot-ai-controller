@@ -804,6 +804,40 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(data.APIVersion).To(Equal("apps/v1"))
 		})
 
+		It("should use _cluster namespace for cluster-scoped resources", func() {
+			obj := &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Node",
+					"metadata": map[string]interface{}{
+						"name": "worker-1",
+						// No namespace - cluster-scoped
+					},
+				},
+			}
+
+			data := extractResourceData(obj)
+			Expect(data.Namespace).To(Equal("_cluster"))
+			Expect(data.Name).To(Equal("worker-1"))
+			Expect(data.Kind).To(Equal("Node"))
+		})
+
+		It("should use _cluster namespace for ClusterRole", func() {
+			obj := &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "rbac.authorization.k8s.io/v1",
+					"kind":       "ClusterRole",
+					"metadata": map[string]interface{}{
+						"name": "admin",
+					},
+				},
+			}
+
+			data := extractResourceData(obj)
+			Expect(data.Namespace).To(Equal("_cluster"))
+			Expect(data.Kind).To(Equal("ClusterRole"))
+		})
+
 		It("should extract labels", func() {
 			obj := &unstructured.Unstructured{
 				Object: map[string]interface{}{
@@ -1518,6 +1552,35 @@ var _ = Describe("ResourceSync Controller", func() {
 					Expect(change.ID).To(Equal("kube-system:v1:Pod:my-pod"))
 				case <-time.After(100 * time.Millisecond):
 					Fail("Expected delete to be queued from DeletedFinalStateUnknown")
+				}
+			})
+
+			It("should use _cluster namespace for cluster-scoped resource deletion", func() {
+				handler := reconciler.makeOnDelete(state)
+
+				obj := &unstructured.Unstructured{
+					Object: map[string]interface{}{
+						"apiVersion": "v1",
+						"kind":       "Node",
+						"metadata": map[string]interface{}{
+							"name": "worker-1",
+							// No namespace - cluster-scoped
+						},
+					},
+				}
+
+				handler(obj)
+
+				select {
+				case change := <-state.changeQueue:
+					Expect(change.Action).To(Equal(ActionDelete))
+					Expect(change.ID).To(Equal("_cluster:v1:Node:worker-1"))
+					Expect(change.DeleteIdentifier).NotTo(BeNil())
+					Expect(change.DeleteIdentifier.Namespace).To(Equal("_cluster"))
+					Expect(change.DeleteIdentifier.Name).To(Equal("worker-1"))
+					Expect(change.DeleteIdentifier.Kind).To(Equal("Node"))
+				case <-time.After(100 * time.Millisecond):
+					Fail("Expected delete to be queued for cluster-scoped resource")
 				}
 			})
 		})
