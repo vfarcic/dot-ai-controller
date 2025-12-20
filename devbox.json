@@ -14,7 +14,11 @@
   ],
   "shell": {
     "init_hook": [
-      "export PATH=$PATH:$HOME/.npm-global/bin"
+      "export PATH=$PATH:$HOME/.npm-global/bin",
+      "export CC=/usr/bin/clang",
+      "export CXX=/usr/bin/clang++",
+      "unset SDKROOT",
+      "unset DEVELOPER_DIR"
     ],
     "scripts": {}
   }

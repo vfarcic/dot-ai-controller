@@ -195,7 +195,7 @@ func (r *ResourceSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if apierrors.IsNotFound(err) {
 			// CR was deleted - stop watching resources for this config
 			logger.Info("ResourceSyncConfig deleted, stopping resource watcher")
-			r.stopWatcher(req.Name)
+			r.stopWatcher(req.Namespace + "/" + req.Name)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get ResourceSyncConfig")
