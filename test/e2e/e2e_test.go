@@ -1573,11 +1573,20 @@ spec:
 	Context("ResourceSyncConfig CRUD Operations", func() {
 		BeforeEach(func() {
 			deployMockResourceSyncServer()
+			// Create test secret for MCP auth
+			cmd := exec.Command("kubectl", "create", "secret", "generic", "mcp-auth-secret",
+				"--from-literal=token=test-token", "--dry-run=client", "-o", "yaml")
+			output, _ := utils.Run(cmd)
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(output)
+			_, _ = utils.Run(cmd)
 		})
 
 		AfterEach(func() {
 			// Clean up any test ResourceSyncConfigs
 			cmd := exec.Command("kubectl", "delete", "resourcesyncconfig", "--all", "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "secret", "mcp-auth-secret", "--ignore-not-found")
 			_, _ = utils.Run(cmd)
 		})
 
@@ -1590,6 +1599,9 @@ metadata:
   name: test-basic-config
 spec:
   mcpEndpoint: http://mock-resource-sync-server.e2e-tests.svc.cluster.local:8080/api/v1/resources/sync
+  mcpAuthSecretRef:
+    name: mcp-auth-secret
+    key: token
   debounceWindowSeconds: 10
   resyncIntervalMinutes: 60
 `
@@ -1624,6 +1636,9 @@ metadata:
   name: test-basic-config
 spec:
   mcpEndpoint: http://mock-resource-sync-server.e2e-tests.svc.cluster.local:8080/api/v1/resources/sync
+  mcpAuthSecretRef:
+    name: mcp-auth-secret
+    key: token
   debounceWindowSeconds: 20
   resyncIntervalMinutes: 120
 `
@@ -1658,11 +1673,20 @@ spec:
 	Context("ResourceSyncConfig Status Updates", func() {
 		BeforeEach(func() {
 			deployMockResourceSyncServer()
+			// Create test secret for MCP auth
+			cmd := exec.Command("kubectl", "create", "secret", "generic", "mcp-auth-secret",
+				"--from-literal=token=test-token", "--dry-run=client", "-o", "yaml")
+			output, _ := utils.Run(cmd)
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(output)
+			_, _ = utils.Run(cmd)
 		})
 
 		AfterEach(func() {
 			// Clean up any test ResourceSyncConfigs
 			cmd := exec.Command("kubectl", "delete", "resourcesyncconfig", "--all", "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "secret", "mcp-auth-secret", "--ignore-not-found")
 			_, _ = utils.Run(cmd)
 		})
 
@@ -1675,6 +1699,9 @@ metadata:
   name: test-status-config
 spec:
   mcpEndpoint: http://mock-resource-sync-server.e2e-tests.svc.cluster.local:8080/api/v1/resources/sync
+  mcpAuthSecretRef:
+    name: mcp-auth-secret
+    key: token
   debounceWindowSeconds: 5
   resyncIntervalMinutes: 60
 `
@@ -1725,6 +1752,9 @@ metadata:
   name: test-delete-config
 spec:
   mcpEndpoint: http://mock-resource-sync-server.e2e-tests.svc.cluster.local:8080/api/v1/resources/sync
+  mcpAuthSecretRef:
+    name: mcp-auth-secret
+    key: token
 `
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(config)
@@ -1757,10 +1787,19 @@ spec:
 	Context("ResourceSyncConfig Resource Discovery", func() {
 		BeforeEach(func() {
 			deployMockResourceSyncServer()
+			// Create test secret for MCP auth
+			cmd := exec.Command("kubectl", "create", "secret", "generic", "mcp-auth-secret",
+				"--from-literal=token=test-token", "--dry-run=client", "-o", "yaml")
+			output, _ := utils.Run(cmd)
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(output)
+			_, _ = utils.Run(cmd)
 		})
 
 		AfterEach(func() {
 			cmd := exec.Command("kubectl", "delete", "resourcesyncconfig", "--all", "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "secret", "mcp-auth-secret", "--ignore-not-found")
 			_, _ = utils.Run(cmd)
 		})
 
@@ -1773,6 +1812,9 @@ metadata:
   name: test-discovery-config
 spec:
   mcpEndpoint: http://mock-resource-sync-server.e2e-tests.svc.cluster.local:8080/api/v1/resources/sync
+  mcpAuthSecretRef:
+    name: mcp-auth-secret
+    key: token
 `
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(config)
