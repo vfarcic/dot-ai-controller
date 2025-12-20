@@ -58,8 +58,8 @@ const (
 // ResourceData contains the data extracted from a Kubernetes resource for syncing to MCP
 // Note: ID is not included - MCP constructs it from namespace/apiVersion/kind/name
 type ResourceData struct {
-	// Namespace of the resource (empty for cluster-scoped)
-	Namespace string `json:"namespace,omitempty"`
+	// Namespace of the resource ("_cluster" for cluster-scoped resources)
+	Namespace string `json:"namespace"`
 	// Name of the resource
 	Name string `json:"name"`
 	// Kind of the resource (e.g., "Deployment", "Pod")
@@ -79,8 +79,8 @@ type ResourceData struct {
 // ResourceIdentifier contains the fields needed to identify a resource for deletion
 // MCP uses these fields to construct the ID for the delete operation
 type ResourceIdentifier struct {
-	// Namespace of the resource (empty for cluster-scoped)
-	Namespace string `json:"namespace,omitempty"`
+	// Namespace of the resource ("_cluster" for cluster-scoped resources)
+	Namespace string `json:"namespace"`
 	// Name of the resource
 	Name string `json:"name"`
 	// Kind of the resource (e.g., "Deployment", "Pod")
@@ -227,8 +227,21 @@ func (r *ResourceSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			r.stopWatcher(configKey(&config))
 		} else {
 			// Config unchanged, just update status with current state
+			existingState.informersMu.RLock()
 			watchedCount := len(existingState.activeInformers)
-			r.updateStatus(ctx, &config, true, watchedCount, "")
+			existingState.informersMu.RUnlock()
+
+			// Check debounce buffer for sync errors
+			lastError := ""
+			if existingState.debounceBuffer != nil {
+				metrics := existingState.debounceBuffer.GetMetrics()
+				if metrics.LastError != "" {
+					lastError = metrics.LastError
+					// Increment sync errors when we detect an error from debounce buffer
+					r.updateSyncErrorCount(ctx, &config)
+				}
+			}
+			r.updateStatus(ctx, &config, true, watchedCount, lastError)
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 	}
@@ -770,8 +783,15 @@ func extractResourceData(obj *unstructured.Unstructured) *ResourceData {
 		}
 	}
 
+	// For cluster-scoped resources, use "_cluster" as the namespace
+	// MCP endpoint requires namespace to be a non-empty string
+	namespace := obj.GetNamespace()
+	if namespace == "" {
+		namespace = clusterScopeNamespace
+	}
+
 	return &ResourceData{
-		Namespace:   obj.GetNamespace(),
+		Namespace:   namespace,
 		Name:        obj.GetName(),
 		Kind:        obj.GetKind(),
 		APIVersion:  obj.GetAPIVersion(),
@@ -913,8 +933,14 @@ func (r *ResourceSyncReconciler) makeOnDelete(state *activeConfigState) func(obj
 		id := buildResourceID(u)
 
 		// Build the identifier for MCP to construct the ID
+		// For cluster-scoped resources, use "_cluster" as the namespace
+		namespace := u.GetNamespace()
+		if namespace == "" {
+			namespace = clusterScopeNamespace
+		}
+
 		deleteIdentifier := &ResourceIdentifier{
-			Namespace:  u.GetNamespace(),
+			Namespace:  namespace,
 			Name:       u.GetName(),
 			Kind:       u.GetKind(),
 			APIVersion: u.GetAPIVersion(),
@@ -934,6 +960,27 @@ func (r *ResourceSyncReconciler) makeOnDelete(state *activeConfigState) func(obj
 			// Queue is full or closed - log and drop (resync will catch orphaned records)
 			logger.V(1).Info("Change queue full or closed, dropping delete event", "id", id)
 		}
+	}
+}
+
+// updateSyncErrorCount increments the sync error count for a ResourceSyncConfig
+func (r *ResourceSyncReconciler) updateSyncErrorCount(ctx context.Context, config *dotaiv1alpha1.ResourceSyncConfig) {
+	logger := logf.FromContext(ctx)
+
+	// Fetch fresh copy to avoid conflicts
+	fresh := &dotaiv1alpha1.ResourceSyncConfig{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: config.Namespace, Name: config.Name}, fresh); err != nil {
+		logger.Error(err, "Failed to fetch ResourceSyncConfig for sync error count update")
+		return
+	}
+
+	fresh.Status.SyncErrors++
+	if err := r.Status().Update(ctx, fresh); err != nil {
+		if apierrors.IsConflict(err) {
+			logger.V(1).Info("Conflict updating sync error count, will retry on next reconcile")
+			return
+		}
+		logger.V(1).Info("Failed to update sync error count", "error", err)
 	}
 }
 

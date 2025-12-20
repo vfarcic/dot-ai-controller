@@ -484,3 +484,170 @@ func TestDebounceBuffer_DeduplicationPerformance(t *testing.T) {
 	assert.Less(t, duration, 1*time.Second)
 	assert.Equal(t, 1, buffer.PendingCount())
 }
+
+func TestDebounceBuffer_RecordError(t *testing.T) {
+	changeQueue := make(chan *ResourceChange, 10)
+	buffer := NewDebounceBuffer(DebounceBufferConfig{
+		Window:      1 * time.Hour,
+		ChangeQueue: changeQueue,
+	})
+
+	// Initially no error
+	metrics := buffer.GetMetrics()
+	assert.Empty(t, metrics.LastError)
+	assert.True(t, metrics.LastErrorTime.IsZero())
+
+	// Record an error
+	buffer.recordError("sync failed: connection refused")
+
+	// Verify error is recorded
+	metrics = buffer.GetMetrics()
+	assert.Equal(t, "sync failed: connection refused", metrics.LastError)
+	assert.False(t, metrics.LastErrorTime.IsZero())
+}
+
+func TestDebounceBuffer_ClearError(t *testing.T) {
+	changeQueue := make(chan *ResourceChange, 10)
+	buffer := NewDebounceBuffer(DebounceBufferConfig{
+		Window:      1 * time.Hour,
+		ChangeQueue: changeQueue,
+	})
+
+	// Record an error
+	buffer.recordError("sync failed")
+	metrics := buffer.GetMetrics()
+	assert.Equal(t, "sync failed", metrics.LastError)
+
+	// Clear the error
+	buffer.clearError()
+
+	// Verify error is cleared
+	metrics = buffer.GetMetrics()
+	assert.Empty(t, metrics.LastError)
+}
+
+func TestDebounceBuffer_FlushRecordsErrorOnFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal server error"))
+	}))
+	defer server.Close()
+
+	mcpClient := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
+		Endpoint:   server.URL + "/api/v1/resources/sync",
+		HTTPClient: server.Client(),
+		MaxRetries: 0, // No retries for faster test
+	})
+
+	changeQueue := make(chan *ResourceChange, 10)
+	buffer := NewDebounceBuffer(DebounceBufferConfig{
+		Window:      1 * time.Hour,
+		MCPClient:   mcpClient,
+		ChangeQueue: changeQueue,
+	})
+
+	// Add a change
+	buffer.record(&ResourceChange{
+		Action: ActionUpsert,
+		ID:     "test:v1:Pod:foo",
+		Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
+	})
+
+	// Flush - should fail and record error
+	ctx := context.Background()
+	buffer.flush(ctx)
+
+	// Verify error was recorded
+	metrics := buffer.GetMetrics()
+	assert.NotEmpty(t, metrics.LastError)
+	assert.Contains(t, metrics.LastError, "500")
+}
+
+func TestDebounceBuffer_FlushClearsErrorOnSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := SyncResponse{Success: true}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	mcpClient := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
+		Endpoint:   server.URL + "/api/v1/resources/sync",
+		HTTPClient: server.Client(),
+	})
+
+	changeQueue := make(chan *ResourceChange, 10)
+	buffer := NewDebounceBuffer(DebounceBufferConfig{
+		Window:      1 * time.Hour,
+		MCPClient:   mcpClient,
+		ChangeQueue: changeQueue,
+	})
+
+	// First, record an error (simulating previous failure)
+	buffer.recordError("previous error")
+	metrics := buffer.GetMetrics()
+	assert.Equal(t, "previous error", metrics.LastError)
+
+	// Add a change and flush successfully
+	buffer.record(&ResourceChange{
+		Action: ActionUpsert,
+		ID:     "test:v1:Pod:foo",
+		Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
+	})
+
+	ctx := context.Background()
+	buffer.flush(ctx)
+
+	// Verify error was cleared on success
+	metrics = buffer.GetMetrics()
+	assert.Empty(t, metrics.LastError)
+}
+
+func TestDebounceBuffer_FlushRecordsErrorOnMCPErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := SyncResponse{
+			Success: false,
+			Error: &struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+				Details *struct {
+					Upserted int           `json:"upserted,omitempty"`
+					Deleted  int           `json:"deleted,omitempty"`
+					Failures []SyncFailure `json:"failures,omitempty"`
+				} `json:"details,omitempty"`
+			}{
+				Code:    "VALIDATION_ERROR",
+				Message: "namespace is required",
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	mcpClient := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
+		Endpoint:   server.URL + "/api/v1/resources/sync",
+		HTTPClient: server.Client(),
+	})
+
+	changeQueue := make(chan *ResourceChange, 10)
+	buffer := NewDebounceBuffer(DebounceBufferConfig{
+		Window:      1 * time.Hour,
+		MCPClient:   mcpClient,
+		ChangeQueue: changeQueue,
+	})
+
+	// Add a change
+	buffer.record(&ResourceChange{
+		Action: ActionUpsert,
+		ID:     "test:v1:Pod:foo",
+		Data:   &ResourceData{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
+	})
+
+	// Flush - MCP returns error response
+	ctx := context.Background()
+	buffer.flush(ctx)
+
+	// Verify error was recorded
+	metrics := buffer.GetMetrics()
+	assert.NotEmpty(t, metrics.LastError)
+	assert.Contains(t, metrics.LastError, "namespace is required")
+}

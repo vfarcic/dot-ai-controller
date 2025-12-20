@@ -33,7 +33,10 @@ type DebounceBuffer struct {
 	totalDropped   int64
 	lastFlushTime  time.Time
 	lastFlushCount int
-	metricsMu      sync.RWMutex
+	// lastError stores the most recent sync error
+	lastError     string
+	lastErrorTime time.Time
+	metricsMu     sync.RWMutex
 }
 
 // DebounceBufferConfig holds configuration for creating a DebounceBuffer
@@ -178,6 +181,8 @@ func (b *DebounceBuffer) flush(ctx context.Context) {
 			"upserts", len(upserts),
 			"deletes", len(deletes),
 		)
+		// Record the error for status reporting
+		b.recordError(err.Error())
 		// Re-queue failed changes for next flush
 		b.requeueChangesFromMap(changesToRequeue)
 		return
@@ -187,11 +192,17 @@ func (b *DebounceBuffer) flush(ctx context.Context) {
 	b.updateMetrics(resp, len(upserts), len(deletes))
 
 	if !resp.Success {
+		errMsg := resp.GetErrorMessage()
 		logger.Error(nil, "MCP sync returned error",
-			"error", resp.GetErrorMessage(),
+			"error", errMsg,
 			"failures", resp.GetFailures(),
 		)
+		// Record the error for status reporting
+		b.recordError(errMsg)
 		// For partial failures, we don't re-queue - the next resync will catch them
+	} else {
+		// Clear error on success
+		b.clearError()
 	}
 }
 
@@ -230,6 +241,21 @@ func (b *DebounceBuffer) incrementDropped() {
 	b.totalDropped++
 }
 
+// recordError stores the last sync error
+func (b *DebounceBuffer) recordError(errMsg string) {
+	b.metricsMu.Lock()
+	defer b.metricsMu.Unlock()
+	b.lastError = errMsg
+	b.lastErrorTime = time.Now()
+}
+
+// clearError clears the last sync error (called on successful sync)
+func (b *DebounceBuffer) clearError() {
+	b.metricsMu.Lock()
+	defer b.metricsMu.Unlock()
+	b.lastError = ""
+}
+
 // GetMetrics returns current buffer metrics
 func (b *DebounceBuffer) GetMetrics() DebounceBufferMetrics {
 	b.metricsMu.RLock()
@@ -247,6 +273,8 @@ func (b *DebounceBuffer) GetMetrics() DebounceBufferMetrics {
 		PendingChanges: pendingCount,
 		LastFlushTime:  b.lastFlushTime,
 		LastFlushCount: b.lastFlushCount,
+		LastError:      b.lastError,
+		LastErrorTime:  b.lastErrorTime,
 	}
 }
 
@@ -259,6 +287,10 @@ type DebounceBufferMetrics struct {
 	PendingChanges int
 	LastFlushTime  time.Time
 	LastFlushCount int
+	// LastError contains the last sync error message (empty if last sync succeeded)
+	LastError string
+	// LastErrorTime is when the last error occurred
+	LastErrorTime time.Time
 }
 
 // PendingCount returns the number of pending changes in the buffer
