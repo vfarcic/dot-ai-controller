@@ -1570,33 +1570,40 @@ spec:
 		})
 	})
 
-	Context("ResourceSyncConfig CRUD Operations", func() {
+	Context("ResourceSyncConfig", func() {
+		// Shared setup for all ResourceSyncConfig tests
 		BeforeEach(func() {
 			deployMockResourceSyncServer()
-			// Create test secret for MCP auth
+			By("creating test secret for MCP auth")
 			cmd := exec.Command("kubectl", "create", "secret", "generic", "mcp-auth-secret",
-				"--from-literal=token=test-token", "--dry-run=client", "-o", "yaml")
-			output, _ := utils.Run(cmd)
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
+				"-n", testNamespace,
+				"--from-literal=token=test-token",
+				"--dry-run=client", "-o", "yaml")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to generate secret YAML")
+			cmd = exec.Command("kubectl", "apply", "-n", testNamespace, "-f", "-")
 			cmd.Stdin = strings.NewReader(output)
-			_, _ = utils.Run(cmd)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create mcp-auth-secret")
 		})
 
 		AfterEach(func() {
 			// Clean up any test ResourceSyncConfigs
-			cmd := exec.Command("kubectl", "delete", "resourcesyncconfig", "--all", "--ignore-not-found")
+			cmd := exec.Command("kubectl", "delete", "resourcesyncconfig", "--all", "-n", testNamespace, "--ignore-not-found")
 			_, _ = utils.Run(cmd)
-			cmd = exec.Command("kubectl", "delete", "secret", "mcp-auth-secret", "--ignore-not-found")
+			cmd = exec.Command("kubectl", "delete", "secret", "mcp-auth-secret", "-n", testNamespace, "--ignore-not-found")
 			_, _ = utils.Run(cmd)
 		})
 
-		It("should create and validate ResourceSyncConfig resources", func() {
-			By("creating a basic ResourceSyncConfig")
-			basicConfig := `
+		Context("CRUD Operations", func() {
+			It("should create and validate ResourceSyncConfig resources", func() {
+				By("creating a basic ResourceSyncConfig")
+				basicConfig := fmt.Sprintf(`
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: ResourceSyncConfig
 metadata:
   name: test-basic-config
+  namespace: %s
 spec:
   mcpEndpoint: http://mock-resource-sync-server.e2e-tests.svc.cluster.local:8080/api/v1/resources/sync
   mcpAuthSecretRef:
@@ -1604,36 +1611,37 @@ spec:
     key: token
   debounceWindowSeconds: 10
   resyncIntervalMinutes: 60
-`
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(basicConfig)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create basic ResourceSyncConfig")
+`, testNamespace)
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(basicConfig)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create basic ResourceSyncConfig")
 
-			By("verifying the ResourceSyncConfig was created successfully")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-basic-config",
-					"-o", "jsonpath={.metadata.name}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("test-basic-config"))
-			}).Should(Succeed())
+				By("verifying the ResourceSyncConfig was created successfully")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-basic-config",
+						"-n", testNamespace, "-o", "jsonpath={.metadata.name}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("test-basic-config"))
+				}).Should(Succeed())
 
-			By("verifying ResourceSyncConfig spec was applied correctly")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-basic-config",
-					"-o", "jsonpath={.spec.debounceWindowSeconds}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("10"), "debounceWindowSeconds should be 10")
-			}).Should(Succeed())
+				By("verifying ResourceSyncConfig spec was applied correctly")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-basic-config",
+						"-n", testNamespace, "-o", "jsonpath={.spec.debounceWindowSeconds}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("10"), "debounceWindowSeconds should be 10")
+				}).Should(Succeed())
 
-			By("updating the ResourceSyncConfig with new configuration")
-			updatedConfig := `
+				By("updating the ResourceSyncConfig with new configuration")
+				updatedConfig := fmt.Sprintf(`
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: ResourceSyncConfig
 metadata:
   name: test-basic-config
+  namespace: %s
 spec:
   mcpEndpoint: http://mock-resource-sync-server.e2e-tests.svc.cluster.local:8080/api/v1/resources/sync
   mcpAuthSecretRef:
@@ -1641,62 +1649,44 @@ spec:
     key: token
   debounceWindowSeconds: 20
   resyncIntervalMinutes: 120
-`
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(updatedConfig)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to update ResourceSyncConfig")
+`, testNamespace)
+				cmd = exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(updatedConfig)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to update ResourceSyncConfig")
 
-			By("verifying the update was applied")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-basic-config",
-					"-o", "jsonpath={.spec.debounceWindowSeconds}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("20"), "debounceWindowSeconds should be updated to 20")
-			}).Should(Succeed())
+				By("verifying the update was applied")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-basic-config",
+						"-n", testNamespace, "-o", "jsonpath={.spec.debounceWindowSeconds}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("20"), "debounceWindowSeconds should be updated to 20")
+				}).Should(Succeed())
 
-			By("cleaning up the test ResourceSyncConfig")
-			cmd = exec.Command("kubectl", "delete", "resourcesyncconfig", "test-basic-config")
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to delete ResourceSyncConfig")
+				By("cleaning up the test ResourceSyncConfig")
+				cmd = exec.Command("kubectl", "delete", "resourcesyncconfig", "test-basic-config", "-n", testNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to delete ResourceSyncConfig")
 
-			By("verifying the ResourceSyncConfig was deleted")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-basic-config")
-				_, err := utils.Run(cmd)
-				g.Expect(err).To(HaveOccurred(), "ResourceSyncConfig should be deleted")
-			}).Should(Succeed())
-		})
-	})
-
-	Context("ResourceSyncConfig Status Updates", func() {
-		BeforeEach(func() {
-			deployMockResourceSyncServer()
-			// Create test secret for MCP auth
-			cmd := exec.Command("kubectl", "create", "secret", "generic", "mcp-auth-secret",
-				"--from-literal=token=test-token", "--dry-run=client", "-o", "yaml")
-			output, _ := utils.Run(cmd)
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(output)
-			_, _ = utils.Run(cmd)
+				By("verifying the ResourceSyncConfig was deleted")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-basic-config", "-n", testNamespace)
+					_, err := utils.Run(cmd)
+					g.Expect(err).To(HaveOccurred(), "ResourceSyncConfig should be deleted")
+				}).Should(Succeed())
+			})
 		})
 
-		AfterEach(func() {
-			// Clean up any test ResourceSyncConfigs
-			cmd := exec.Command("kubectl", "delete", "resourcesyncconfig", "--all", "--ignore-not-found")
-			_, _ = utils.Run(cmd)
-			cmd = exec.Command("kubectl", "delete", "secret", "mcp-auth-secret", "--ignore-not-found")
-			_, _ = utils.Run(cmd)
-		})
-
-		It("should update status when watcher starts", func() {
-			By("creating a ResourceSyncConfig")
-			config := `
+		Context("Status Updates", func() {
+			It("should update status when watcher starts", func() {
+				By("creating a ResourceSyncConfig")
+				config := fmt.Sprintf(`
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: ResourceSyncConfig
 metadata:
   name: test-status-config
+  namespace: %s
 spec:
   mcpEndpoint: http://mock-resource-sync-server.e2e-tests.svc.cluster.local:8080/api/v1/resources/sync
   mcpAuthSecretRef:
@@ -1704,142 +1694,127 @@ spec:
     key: token
   debounceWindowSeconds: 5
   resyncIntervalMinutes: 60
-`
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(config)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create ResourceSyncConfig")
+`, testNamespace)
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(config)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create ResourceSyncConfig")
 
-			By("waiting for status to show active watcher")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-status-config",
-					"-o", "jsonpath={.status.active}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("true"), "Status should show active watcher")
-			}, 60*time.Second).Should(Succeed())
+				By("waiting for status to show active watcher")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-status-config",
+						"-n", testNamespace, "-o", "jsonpath={.status.active}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("true"), "Status should show active watcher")
+				}, 60*time.Second).Should(Succeed())
 
-			By("verifying watchedResourceTypes is populated")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-status-config",
-					"-o", "jsonpath={.status.watchedResourceTypes}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).NotTo(Equal(""), "watchedResourceTypes should be set")
-				g.Expect(output).NotTo(Equal("0"), "Should be watching at least some resource types")
-			}).Should(Succeed())
+				By("verifying watchedResourceTypes is populated")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-status-config",
+						"-n", testNamespace, "-o", "jsonpath={.status.watchedResourceTypes}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).NotTo(Equal(""), "watchedResourceTypes should be set")
+					g.Expect(output).NotTo(Equal("0"), "Should be watching at least some resource types")
+				}).Should(Succeed())
 
-			By("verifying Ready condition is True")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-status-config",
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("True"), "Ready condition should be True")
-			}).Should(Succeed())
+				By("verifying Ready condition is True")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-status-config",
+						"-n", testNamespace, "-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("True"), "Ready condition should be True")
+				}).Should(Succeed())
 
-			By("cleaning up")
-			cmd = exec.Command("kubectl", "delete", "resourcesyncconfig", "test-status-config")
-			_, _ = utils.Run(cmd)
-		})
+				By("cleaning up")
+				cmd = exec.Command("kubectl", "delete", "resourcesyncconfig", "test-status-config", "-n", testNamespace)
+				_, _ = utils.Run(cmd)
+			})
 
-		It("should stop watcher when ResourceSyncConfig is deleted", func() {
-			By("creating a ResourceSyncConfig")
-			config := `
+			It("should stop watcher when ResourceSyncConfig is deleted", func() {
+				By("creating a ResourceSyncConfig")
+				config := fmt.Sprintf(`
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: ResourceSyncConfig
 metadata:
   name: test-delete-config
+  namespace: %s
 spec:
   mcpEndpoint: http://mock-resource-sync-server.e2e-tests.svc.cluster.local:8080/api/v1/resources/sync
   mcpAuthSecretRef:
     name: mcp-auth-secret
     key: token
-`
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(config)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("waiting for watcher to become active")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-delete-config",
-					"-o", "jsonpath={.status.active}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("true"))
-			}, 60*time.Second).Should(Succeed())
-
-			By("deleting the ResourceSyncConfig")
-			cmd = exec.Command("kubectl", "delete", "resourcesyncconfig", "test-delete-config")
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("verifying the ResourceSyncConfig was deleted")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-delete-config")
+`, testNamespace)
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(config)
 				_, err := utils.Run(cmd)
-				g.Expect(err).To(HaveOccurred(), "ResourceSyncConfig should be deleted")
-			}).Should(Succeed())
-		})
-	})
+				Expect(err).NotTo(HaveOccurred())
 
-	Context("ResourceSyncConfig Resource Discovery", func() {
-		BeforeEach(func() {
-			deployMockResourceSyncServer()
-			// Create test secret for MCP auth
-			cmd := exec.Command("kubectl", "create", "secret", "generic", "mcp-auth-secret",
-				"--from-literal=token=test-token", "--dry-run=client", "-o", "yaml")
-			output, _ := utils.Run(cmd)
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(output)
-			_, _ = utils.Run(cmd)
+				By("waiting for watcher to become active")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-delete-config",
+						"-n", testNamespace, "-o", "jsonpath={.status.active}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(Equal("true"))
+				}, 60*time.Second).Should(Succeed())
+
+				By("deleting the ResourceSyncConfig")
+				cmd = exec.Command("kubectl", "delete", "resourcesyncconfig", "test-delete-config", "-n", testNamespace)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("verifying the ResourceSyncConfig was deleted")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-delete-config", "-n", testNamespace)
+					_, err := utils.Run(cmd)
+					g.Expect(err).To(HaveOccurred(), "ResourceSyncConfig should be deleted")
+				}).Should(Succeed())
+			})
 		})
 
-		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "resourcesyncconfig", "--all", "--ignore-not-found")
-			_, _ = utils.Run(cmd)
-			cmd = exec.Command("kubectl", "delete", "secret", "mcp-auth-secret", "--ignore-not-found")
-			_, _ = utils.Run(cmd)
-		})
-
-		It("should discover and watch built-in resource types", func() {
-			By("creating a ResourceSyncConfig")
-			config := `
+		Context("Resource Discovery", func() {
+			It("should discover and watch built-in resource types", func() {
+				By("creating a ResourceSyncConfig")
+				config := fmt.Sprintf(`
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: ResourceSyncConfig
 metadata:
   name: test-discovery-config
+  namespace: %s
 spec:
   mcpEndpoint: http://mock-resource-sync-server.e2e-tests.svc.cluster.local:8080/api/v1/resources/sync
   mcpAuthSecretRef:
     name: mcp-auth-secret
     key: token
-`
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(config)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
+`, testNamespace)
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(config)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
 
-			By("waiting for resource discovery to complete")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-discovery-config",
-					"-o", "jsonpath={.status.watchedResourceTypes}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				// Should discover many resource types (pods, deployments, services, etc.)
-				// Typically 20+ resource types in a basic cluster
-				g.Expect(output).NotTo(Equal(""))
-				// Parse as int and check it's reasonable
-				var count int
-				_, parseErr := fmt.Sscanf(output, "%d", &count)
-				g.Expect(parseErr).NotTo(HaveOccurred())
-				g.Expect(count).To(BeNumerically(">=", 10), "Should discover at least 10 resource types")
-			}, 60*time.Second).Should(Succeed())
+				By("waiting for resource discovery to complete")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-discovery-config",
+						"-n", testNamespace, "-o", "jsonpath={.status.watchedResourceTypes}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					// Should discover many resource types (pods, deployments, services, etc.)
+					// Typically 20+ resource types in a basic cluster
+					g.Expect(output).NotTo(Equal(""))
+					// Parse as int and check it's reasonable
+					var count int
+					_, parseErr := fmt.Sscanf(output, "%d", &count)
+					g.Expect(parseErr).NotTo(HaveOccurred())
+					g.Expect(count).To(BeNumerically(">=", 10), "Should discover at least 10 resource types")
+				}, 60*time.Second).Should(Succeed())
 
-			By("cleaning up")
-			cmd = exec.Command("kubectl", "delete", "resourcesyncconfig", "test-discovery-config")
-			_, _ = utils.Run(cmd)
+				By("cleaning up")
+				cmd = exec.Command("kubectl", "delete", "resourcesyncconfig", "test-discovery-config", "-n", testNamespace)
+				_, _ = utils.Run(cmd)
+			})
 		})
 	})
 })
