@@ -16,20 +16,32 @@ The ResourceSyncConfig enables:
 
 ## Quick Start
 
-Create a ResourceSyncConfig to start syncing resources:
+1. Create a secret with your MCP API key:
+
+```bash
+kubectl create secret generic mcp-credentials \
+  --namespace dot-ai \
+  --from-literal=api-key=your-api-key-here
+```
+
+2. Create a ResourceSyncConfig to start syncing resources:
 
 ```yaml
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: ResourceSyncConfig
 metadata:
   name: default-sync
+  namespace: dot-ai
 spec:
   mcpEndpoint: http://dot-ai.dot-ai.svc.cluster.local:3456/api/v1/resources/sync
+  mcpAuthSecretRef:
+    name: mcp-credentials
+    key: api-key
   debounceWindowSeconds: 10
   resyncIntervalMinutes: 60
 ```
 
-Apply it:
+3. Apply it:
 
 ```bash
 kubectl apply -f resourcesyncconfig.yaml
@@ -39,33 +51,28 @@ kubectl apply -f resourcesyncconfig.yaml
 
 ### Spec Fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `mcpEndpoint` | string | required | URL of the MCP resource sync endpoint |
-| `debounceWindowSeconds` | int | 10 | Time window to batch changes before syncing |
-| `resyncIntervalMinutes` | int | 60 | Full resync interval (catches missed events) |
-| `mcpAuthSecretRef` | SecretReference | optional | Secret containing API key for MCP authentication |
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `mcpEndpoint` | string | Yes | - | Full URL of the MCP resource sync endpoint |
+| `mcpAuthSecretRef` | SecretReference | Yes | - | Secret containing API key for MCP authentication |
+| `debounceWindowSeconds` | int | No | 10 | Time window to batch changes before syncing |
+| `resyncIntervalMinutes` | int | No | 60 | Full resync interval (catches missed events) |
 
 ### Authentication
 
-If your MCP endpoint requires authentication, reference a secret:
+The `mcpAuthSecretRef` field is required and must reference a Kubernetes Secret in the same namespace as the ResourceSyncConfig:
 
 ```yaml
-apiVersion: dot-ai.devopstoolkit.live/v1alpha1
-kind: ResourceSyncConfig
-metadata:
-  name: authenticated-sync
-spec:
-  mcpEndpoint: https://mcp.example.com/api/v1/resources/sync
-  mcpAuthSecretRef:
-    name: mcp-credentials
-    key: api-key
+mcpAuthSecretRef:
+  name: mcp-credentials  # Secret name
+  key: api-key           # Key within the secret containing the token
 ```
 
-Create the secret:
+Create the secret in the same namespace:
 
 ```bash
 kubectl create secret generic mcp-credentials \
+  --namespace dot-ai \
   --from-literal=api-key=your-api-key-here
 ```
 
@@ -150,20 +157,21 @@ apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: ResourceSyncConfig
 metadata:
   name: production-sync
+  namespace: dot-ai
 spec:
-  # MCP endpoint for resource sync
+  # MCP endpoint for resource sync (full URL)
   mcpEndpoint: http://dot-ai.dot-ai.svc.cluster.local:3456/api/v1/resources/sync
+
+  # Required: authentication for MCP
+  mcpAuthSecretRef:
+    name: mcp-credentials
+    key: api-key
 
   # Batch changes for 10 seconds before syncing
   debounceWindowSeconds: 10
 
   # Full resync every hour to catch any missed events
   resyncIntervalMinutes: 60
-
-  # Optional: authentication for MCP
-  # mcpAuthSecretRef:
-  #   name: mcp-credentials
-  #   key: api-key
 ```
 
 ## Troubleshooting

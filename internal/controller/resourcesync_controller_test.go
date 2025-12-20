@@ -312,6 +312,10 @@ var _ = Describe("ResourceSync Controller", func() {
 					McpEndpoint:           "https://mcp.example.com",
 					DebounceWindowSeconds: 10,
 					ResyncIntervalMinutes: 60,
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-secret",
+						Key:  "api-key",
+					},
 				},
 			}
 			newConfig = oldConfig.DeepCopy()
@@ -332,29 +336,8 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(reconciler.configChanged(oldConfig, newConfig)).To(BeTrue())
 		})
 
-		It("should detect auth secret ref added", func() {
-			newConfig.Spec.McpAuthSecretRef = &dotaiv1alpha1.SecretReference{
-				Name: "mcp-secret",
-				Key:  "api-key",
-			}
-			Expect(reconciler.configChanged(oldConfig, newConfig)).To(BeTrue())
-		})
-
-		It("should detect auth secret ref removed", func() {
-			oldConfig.Spec.McpAuthSecretRef = &dotaiv1alpha1.SecretReference{
-				Name: "mcp-secret",
-				Key:  "api-key",
-			}
-			newConfig.Spec.McpAuthSecretRef = nil
-			Expect(reconciler.configChanged(oldConfig, newConfig)).To(BeTrue())
-		})
-
 		It("should detect auth secret name change", func() {
-			oldConfig.Spec.McpAuthSecretRef = &dotaiv1alpha1.SecretReference{
-				Name: "mcp-secret",
-				Key:  "api-key",
-			}
-			newConfig.Spec.McpAuthSecretRef = &dotaiv1alpha1.SecretReference{
+			newConfig.Spec.McpAuthSecretRef = dotaiv1alpha1.SecretReference{
 				Name: "mcp-secret-new",
 				Key:  "api-key",
 			}
@@ -362,11 +345,7 @@ var _ = Describe("ResourceSync Controller", func() {
 		})
 
 		It("should detect auth secret key change", func() {
-			oldConfig.Spec.McpAuthSecretRef = &dotaiv1alpha1.SecretReference{
-				Name: "mcp-secret",
-				Key:  "api-key",
-			}
-			newConfig.Spec.McpAuthSecretRef = &dotaiv1alpha1.SecretReference{
+			newConfig.Spec.McpAuthSecretRef = dotaiv1alpha1.SecretReference{
 				Name: "mcp-secret",
 				Key:  "token",
 			}

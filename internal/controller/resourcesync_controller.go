@@ -132,10 +132,6 @@ type ResourceSyncReconciler struct {
 	// HttpClient for MCP communication
 	HttpClient *http.Client
 
-	// AuthSecretNamespace is the default namespace for auth secrets
-	// Since ResourceSyncConfig is cluster-scoped, we need a default namespace
-	AuthSecretNamespace string
-
 	// dynamicClient for fetching arbitrary resources
 	dynamicClient dynamic.Interface
 
@@ -143,7 +139,7 @@ type ResourceSyncReconciler struct {
 	discoveryClient discovery.DiscoveryInterface
 
 	// activeConfigs tracks which ResourceSyncConfig CRs have active watchers
-	// Key is the CR name (cluster-scoped, so no namespace)
+	// Key is namespace/name of the CR
 	activeConfigs map[string]*activeConfigState
 	configsMu     sync.RWMutex
 }
@@ -166,6 +162,20 @@ type activeConfigState struct {
 	debounceBuffer *DebounceBuffer
 	// mcpClient handles communication with the MCP endpoint
 	mcpClient *MCPResourceSyncClient
+}
+
+// configKey returns a unique key for a ResourceSyncConfig (namespace/name)
+func configKey(config *dotaiv1alpha1.ResourceSyncConfig) string {
+	return config.Namespace + "/" + config.Name
+}
+
+// parseConfigKey parses a config key back to namespace and name
+func parseConfigKey(key string) (namespace, name string) {
+	parts := strings.SplitN(key, "/", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", key
 }
 
 // +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=resourcesyncconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -207,14 +217,14 @@ func (r *ResourceSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Check if we already have an active watcher for this config
 	r.configsMu.RLock()
-	existingState, exists := r.activeConfigs[config.Name]
+	existingState, exists := r.activeConfigs[configKey(&config)]
 	r.configsMu.RUnlock()
 
 	if exists {
 		// Check if config changed (endpoint, timing, etc.)
 		if r.configChanged(existingState.config, &config) {
 			logger.Info("ResourceSyncConfig changed, restarting watcher")
-			r.stopWatcher(config.Name)
+			r.stopWatcher(configKey(&config))
 		} else {
 			// Config unchanged, just update status with current state
 			watchedCount := len(existingState.activeInformers)
@@ -272,14 +282,9 @@ func (r *ResourceSyncReconciler) configChanged(old, new *dotaiv1alpha1.ResourceS
 		return true
 	}
 	// Check auth secret ref changes
-	if (old.Spec.McpAuthSecretRef == nil) != (new.Spec.McpAuthSecretRef == nil) {
+	if old.Spec.McpAuthSecretRef.Name != new.Spec.McpAuthSecretRef.Name ||
+		old.Spec.McpAuthSecretRef.Key != new.Spec.McpAuthSecretRef.Key {
 		return true
-	}
-	if old.Spec.McpAuthSecretRef != nil && new.Spec.McpAuthSecretRef != nil {
-		if old.Spec.McpAuthSecretRef.Name != new.Spec.McpAuthSecretRef.Name ||
-			old.Spec.McpAuthSecretRef.Key != new.Spec.McpAuthSecretRef.Key {
-			return true
-		}
 	}
 	return false
 }
@@ -310,17 +315,12 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 			}
 		}
 
-		authSecretNamespace := r.AuthSecretNamespace
-		if authSecretNamespace == "" {
-			authSecretNamespace = "default"
-		}
-
 		mcpClient = NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
 			Endpoint:            config.Spec.McpEndpoint,
 			HTTPClient:          httpClient,
 			K8sClient:           r.Client,
 			AuthSecretRef:       config.Spec.McpAuthSecretRef,
-			AuthSecretNamespace: authSecretNamespace,
+			AuthSecretNamespace: config.Namespace,
 		})
 		logger.Info("MCP client created", "endpoint", config.Spec.McpEndpoint)
 	} else {
@@ -364,7 +364,7 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 	if r.activeConfigs == nil {
 		r.activeConfigs = make(map[string]*activeConfigState)
 	}
-	r.activeConfigs[config.Name] = state
+	r.activeConfigs[configKey(config)] = state
 	r.configsMu.Unlock()
 
 	// Start informers
@@ -392,11 +392,11 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 		}
 
 		// Perform initial sync
-		r.performInitialSync(watcherCtx, state, config.Name)
+		r.performInitialSync(watcherCtx, state, configKey(config))
 
 		// Start periodic resync loop
 		resyncInterval := time.Duration(config.GetResyncInterval()) * time.Minute
-		go r.periodicResyncLoop(watcherCtx, state, config.Name, resyncInterval)
+		go r.periodicResyncLoop(watcherCtx, state, configKey(config), resyncInterval)
 	}()
 
 	// Update status
@@ -1120,8 +1120,9 @@ func (r *ResourceSyncReconciler) performInitialSync(ctx context.Context, state *
 	}
 
 	// Fetch fresh config for status update
+	configNamespace, configNameOnly := parseConfigKey(configName)
 	var config dotaiv1alpha1.ResourceSyncConfig
-	if getErr := r.Get(ctx, client.ObjectKey{Name: configName}, &config); getErr != nil {
+	if getErr := r.Get(ctx, client.ObjectKey{Namespace: configNamespace, Name: configNameOnly}, &config); getErr != nil {
 		logger.Error(getErr, "Failed to fetch ResourceSyncConfig for status update")
 		return
 	}
@@ -1179,8 +1180,9 @@ func (r *ResourceSyncReconciler) periodicResyncLoop(ctx context.Context, state *
 			resourceCount, err := r.performResync(ctx, state)
 
 			// Update status
+			configNamespace, configNameOnly := parseConfigKey(configName)
 			var config dotaiv1alpha1.ResourceSyncConfig
-			if getErr := r.Get(ctx, client.ObjectKey{Name: configName}, &config); getErr != nil {
+			if getErr := r.Get(ctx, client.ObjectKey{Namespace: configNamespace, Name: configNameOnly}, &config); getErr != nil {
 				logger.Error(getErr, "Failed to fetch ResourceSyncConfig for status update")
 				continue
 			}

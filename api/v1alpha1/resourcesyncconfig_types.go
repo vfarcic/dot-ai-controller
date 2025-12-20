@@ -11,10 +11,10 @@ type ResourceSyncConfigSpec struct {
 	McpEndpoint string `json:"mcpEndpoint"`
 
 	// McpAuthSecretRef references a Kubernetes Secret containing the MCP authentication token
-	// When configured, the controller will include "Authorization: Bearer <token>" header in MCP requests
+	// The controller will include "Authorization: Bearer <token>" header in MCP requests
 	// The Secret must exist in the same namespace as the ResourceSyncConfig
-	// +optional
-	McpAuthSecretRef *SecretReference `json:"mcpAuthSecretRef,omitempty"`
+	// +required
+	McpAuthSecretRef SecretReference `json:"mcpAuthSecretRef"`
 
 	// DebounceWindowSeconds is the time window to collect changes before sending to MCP
 	// Multiple changes to the same resource within this window are batched together
@@ -70,7 +70,6 @@ type ResourceSyncConfigStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster
 // +kubebuilder:printcolumn:name="Active",type="boolean",JSONPath=".status.active",description="Whether sync is active"
 // +kubebuilder:printcolumn:name="Watched",type="integer",JSONPath=".status.watchedResourceTypes",description="Resource types being watched"
 // +kubebuilder:printcolumn:name="Synced",type="integer",JSONPath=".status.totalResourcesSynced",description="Total resources synced"

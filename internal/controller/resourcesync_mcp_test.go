@@ -196,7 +196,7 @@ func TestMCPResourceSyncClient_SyncResources_Success(t *testing.T) {
 
 	// Create client
 	client := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
-		Endpoint:   server.URL,
+		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
 	})
 
@@ -253,7 +253,7 @@ func TestMCPResourceSyncClient_SyncResources_Error(t *testing.T) {
 
 	// Create client with no retries for faster test
 	client := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
-		Endpoint:   server.URL,
+		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
 		MaxRetries: 0,
 	})
@@ -278,7 +278,7 @@ func TestMCPResourceSyncClient_SyncResources_HTTPError(t *testing.T) {
 
 	// Create client with no retries
 	client := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
-		Endpoint:   server.URL,
+		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
 		MaxRetries: 0,
 	})
@@ -322,7 +322,7 @@ func TestMCPResourceSyncClient_Resync(t *testing.T) {
 	defer server.Close()
 
 	client := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
-		Endpoint:   server.URL,
+		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
 	})
 
@@ -365,7 +365,7 @@ func TestMCPResourceSyncClient_RetryOnFailure(t *testing.T) {
 	defer server.Close()
 
 	client := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
-		Endpoint:       server.URL,
+		Endpoint:       server.URL + "/api/v1/resources/sync",
 		HTTPClient:     server.Client(),
 		MaxRetries:     3,
 		InitialBackoff: 10 * time.Millisecond, // Short backoff for test
@@ -434,7 +434,7 @@ func TestNewMCPResourceSyncClient_Defaults(t *testing.T) {
 		Endpoint: "https://example.com",
 	})
 
-	assert.Equal(t, "https://example.com/api/v1/resources/sync", client.endpoint)
+	assert.Equal(t, "https://example.com", client.endpoint)
 	assert.Equal(t, 3, client.maxRetries)
 	assert.Equal(t, 1*time.Second, client.initialBackoff)
 	assert.Equal(t, 30*time.Second, client.maxBackoff)

@@ -229,12 +229,11 @@ func main() {
 	}
 
 	if err := (&controller.ResourceSyncReconciler{
-		Client:              mgr.GetClient(),
-		Scheme:              mgr.GetScheme(),
-		Recorder:            mgr.GetEventRecorderFor("dot-ai-controller"),
-		RestConfig:          mgr.GetConfig(),
-		HttpClient:          httpClient,
-		AuthSecretNamespace: "default",
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Recorder:   mgr.GetEventRecorderFor("dot-ai-controller"),
+		RestConfig: mgr.GetConfig(),
+		HttpClient: httpClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ResourceSyncConfig")
 		os.Exit(1)

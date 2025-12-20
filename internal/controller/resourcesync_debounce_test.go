@@ -162,7 +162,7 @@ func TestDebounceBuffer_FlushSendsToMCP(t *testing.T) {
 	defer server.Close()
 
 	mcpClient := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
-		Endpoint:   server.URL,
+		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
 	})
 
@@ -216,7 +216,7 @@ func TestDebounceBuffer_FlushRequeuesOnError(t *testing.T) {
 	defer server.Close()
 
 	mcpClient := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
-		Endpoint:   server.URL,
+		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
 		MaxRetries: 0, // No retries for faster test
 	})
@@ -253,7 +253,7 @@ func TestDebounceBuffer_RunProcessesChanges(t *testing.T) {
 	defer server.Close()
 
 	mcpClient := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
-		Endpoint:   server.URL,
+		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
 	})
 
@@ -358,7 +358,7 @@ func TestDebounceBuffer_GetMetrics(t *testing.T) {
 	defer server.Close()
 
 	mcpClient := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
-		Endpoint:   server.URL,
+		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
 	})
 

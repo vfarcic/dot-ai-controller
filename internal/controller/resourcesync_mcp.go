@@ -102,8 +102,8 @@ type MCPResourceSyncClient struct {
 	// k8sClient is for fetching secrets
 	k8sClient client.Client
 	// authSecretRef references the secret containing the API key
-	authSecretRef *dotaiv1alpha1.SecretReference
-	// authSecretNamespace is where to find the auth secret (for cluster-scoped CRD, we need a default)
+	authSecretRef dotaiv1alpha1.SecretReference
+	// authSecretNamespace is the namespace where the auth secret is located
 	authSecretNamespace string
 
 	// Retry configuration
@@ -117,7 +117,7 @@ type MCPResourceSyncClientConfig struct {
 	Endpoint            string
 	HTTPClient          *http.Client
 	K8sClient           client.Client
-	AuthSecretRef       *dotaiv1alpha1.SecretReference
+	AuthSecretRef       dotaiv1alpha1.SecretReference
 	AuthSecretNamespace string
 	MaxRetries          int
 	InitialBackoff      time.Duration
@@ -143,7 +143,7 @@ func NewMCPResourceSyncClient(cfg MCPResourceSyncClientConfig) *MCPResourceSyncC
 	}
 
 	return &MCPResourceSyncClient{
-		endpoint:            strings.TrimSuffix(cfg.Endpoint, "/") + "/api/v1/resources/sync",
+		endpoint:            strings.TrimSuffix(cfg.Endpoint, "/"),
 		httpClient:          cfg.HTTPClient,
 		k8sClient:           cfg.K8sClient,
 		authSecretRef:       cfg.AuthSecretRef,
@@ -359,10 +359,6 @@ func (c *MCPResourceSyncClient) send(ctx context.Context, req SyncRequest) (*Syn
 
 // getAuthToken resolves the auth token from the secret reference
 func (c *MCPResourceSyncClient) getAuthToken(ctx context.Context) (string, error) {
-	if c.authSecretRef == nil {
-		return "", nil // No auth configured
-	}
-
 	logger := logf.FromContext(ctx).WithName("resourcesync-mcp")
 
 	secret := &corev1.Secret{}
