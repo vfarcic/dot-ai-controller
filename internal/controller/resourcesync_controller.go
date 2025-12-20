@@ -976,6 +976,10 @@ func (r *ResourceSyncReconciler) updateSyncErrorCount(ctx context.Context, confi
 
 	fresh.Status.SyncErrors++
 	if err := r.Status().Update(ctx, fresh); err != nil {
+		if apierrors.IsConflict(err) {
+			logger.V(1).Info("Conflict updating sync error count, will retry on next reconcile")
+			return
+		}
 		logger.V(1).Info("Failed to update sync error count", "error", err)
 	}
 }

@@ -1907,7 +1907,5 @@ func randString(n int) string {
 	return string(b)
 }
 
-func init() {
-	// Seed random number generator for unique test names
-	rand.Seed(time.Now().UnixNano())
-}
+// Note: rand.Seed is deprecated in Go 1.20+; the global source is auto-seeded.
+// No explicit seeding needed.
