@@ -435,7 +435,8 @@ var _ = Describe("ResourceSync Controller", func() {
 			// Reconcile a config that doesn't exist
 			result, err := reconciler.Reconcile(testCtx, ctrl.Request{
 				NamespacedName: types.NamespacedName{
-					Name: "non-existent-config",
+					Name:      "non-existent-config",
+					Namespace: "default",
 				},
 			})
 
@@ -447,7 +448,8 @@ var _ = Describe("ResourceSync Controller", func() {
 			// Create a ResourceSyncConfig
 			config := &dotaiv1alpha1.ResourceSyncConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-config-" + randString(5),
+					Name:      "test-config-" + randString(5),
+					Namespace: "default",
 				},
 				Spec: dotaiv1alpha1.ResourceSyncConfigSpec{
 					McpEndpoint:           "https://mcp.example.com/resources/sync",
@@ -460,14 +462,15 @@ var _ = Describe("ResourceSync Controller", func() {
 
 			// Clean up after test
 			defer func() {
-				reconciler.stopWatcher(config.Name)
+				reconciler.stopWatcher(config.Namespace + "/" + config.Name)
 				_ = k8sClient.Delete(testCtx, config)
 			}()
 
 			// Reconcile
 			result, err := reconciler.Reconcile(testCtx, ctrl.Request{
 				NamespacedName: types.NamespacedName{
-					Name: config.Name,
+					Name:      config.Name,
+					Namespace: config.Namespace,
 				},
 			})
 
@@ -478,7 +481,7 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(reconciler.GetActiveConfigCount()).To(Equal(1))
 
 			// Verify GVRs were discovered
-			gvrs := reconciler.GetWatchedGVRs(config.Name)
+			gvrs := reconciler.GetWatchedGVRs(config.Namespace + "/" + config.Name)
 			Expect(len(gvrs)).To(BeNumerically(">", 0))
 
 			// Verify common resources are being watched
@@ -505,7 +508,8 @@ var _ = Describe("ResourceSync Controller", func() {
 			// Create a ResourceSyncConfig
 			config := &dotaiv1alpha1.ResourceSyncConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-config-delete-" + randString(5),
+					Name:      "test-config-delete-" + randString(5),
+					Namespace: "default",
 				},
 				Spec: dotaiv1alpha1.ResourceSyncConfigSpec{
 					McpEndpoint: "https://mcp.example.com/resources/sync",
@@ -517,7 +521,8 @@ var _ = Describe("ResourceSync Controller", func() {
 			// Reconcile to start watcher
 			_, err := reconciler.Reconcile(testCtx, ctrl.Request{
 				NamespacedName: types.NamespacedName{
-					Name: config.Name,
+					Name:      config.Name,
+					Namespace: config.Namespace,
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -529,7 +534,8 @@ var _ = Describe("ResourceSync Controller", func() {
 			// Reconcile again - should stop watcher
 			_, err = reconciler.Reconcile(testCtx, ctrl.Request{
 				NamespacedName: types.NamespacedName{
-					Name: config.Name,
+					Name:      config.Name,
+					Namespace: config.Namespace,
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -539,9 +545,11 @@ var _ = Describe("ResourceSync Controller", func() {
 		It("should restart watcher when config changes", func() {
 			// Create a ResourceSyncConfig
 			configName := "test-config-restart-" + randString(5)
+			configNamespace := "default"
 			config := &dotaiv1alpha1.ResourceSyncConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: configName,
+					Name:      configName,
+					Namespace: configNamespace,
 				},
 				Spec: dotaiv1alpha1.ResourceSyncConfigSpec{
 					McpEndpoint:           "https://mcp.example.com/resources/sync",
@@ -552,23 +560,24 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(k8sClient.Create(testCtx, config)).To(Succeed())
 
 			defer func() {
-				reconciler.stopWatcher(configName)
+				reconciler.stopWatcher(configNamespace + "/" + configName)
 				_ = k8sClient.Delete(testCtx, &dotaiv1alpha1.ResourceSyncConfig{
-					ObjectMeta: metav1.ObjectMeta{Name: configName},
+					ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: configNamespace},
 				})
 			}()
 
 			// Initial reconcile
 			_, err := reconciler.Reconcile(testCtx, ctrl.Request{
 				NamespacedName: types.NamespacedName{
-					Name: configName,
+					Name:      configName,
+					Namespace: configNamespace,
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Fetch fresh copy before updating (to avoid conflict)
 			freshConfig := &dotaiv1alpha1.ResourceSyncConfig{}
-			Expect(k8sClient.Get(testCtx, types.NamespacedName{Name: configName}, freshConfig)).To(Succeed())
+			Expect(k8sClient.Get(testCtx, types.NamespacedName{Name: configName, Namespace: configNamespace}, freshConfig)).To(Succeed())
 
 			// Update the config
 			freshConfig.Spec.DebounceWindowSeconds = 20
@@ -577,7 +586,8 @@ var _ = Describe("ResourceSync Controller", func() {
 			// Reconcile again - should restart watcher
 			_, err = reconciler.Reconcile(testCtx, ctrl.Request{
 				NamespacedName: types.NamespacedName{
-					Name: configName,
+					Name:      configName,
+					Namespace: configNamespace,
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -590,7 +600,8 @@ var _ = Describe("ResourceSync Controller", func() {
 			// Create a ResourceSyncConfig
 			config := &dotaiv1alpha1.ResourceSyncConfig{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-config-status-" + randString(5),
+					Name:      "test-config-status-" + randString(5),
+					Namespace: "default",
 				},
 				Spec: dotaiv1alpha1.ResourceSyncConfigSpec{
 					McpEndpoint: "https://mcp.example.com/resources/sync",
@@ -600,21 +611,22 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(k8sClient.Create(testCtx, config)).To(Succeed())
 
 			defer func() {
-				reconciler.stopWatcher(config.Name)
+				reconciler.stopWatcher(config.Namespace + "/" + config.Name)
 				_ = k8sClient.Delete(testCtx, config)
 			}()
 
 			// Reconcile
 			_, err := reconciler.Reconcile(testCtx, ctrl.Request{
 				NamespacedName: types.NamespacedName{
-					Name: config.Name,
+					Name:      config.Name,
+					Namespace: config.Namespace,
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Fetch updated config
 			updatedConfig := &dotaiv1alpha1.ResourceSyncConfig{}
-			Expect(k8sClient.Get(testCtx, types.NamespacedName{Name: config.Name}, updatedConfig)).To(Succeed())
+			Expect(k8sClient.Get(testCtx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, updatedConfig)).To(Succeed())
 
 			// Verify status was updated
 			Expect(updatedConfig.Status.Active).To(BeTrue())

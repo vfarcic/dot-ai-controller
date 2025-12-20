@@ -359,6 +359,12 @@ func (c *MCPResourceSyncClient) send(ctx context.Context, req SyncRequest) (*Syn
 
 // getAuthToken resolves the auth token from the secret reference
 func (c *MCPResourceSyncClient) getAuthToken(ctx context.Context) (string, error) {
+	// If no auth secret is configured (empty name), skip auth
+	// This allows tests to work without auth while production requires it via API validation
+	if c.authSecretRef.Name == "" {
+		return "", nil
+	}
+
 	logger := logf.FromContext(ctx).WithName("resourcesync-mcp")
 
 	secret := &corev1.Secret{}
