@@ -12,7 +12,7 @@ spec:
     listKind: ResourceSyncConfigList
     plural: resourcesyncconfigs
     singular: resourcesyncconfig
-  scope: Cluster
+  scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - description: Whether sync is active
@@ -76,7 +76,7 @@ spec:
               mcpAuthSecretRef:
                 description: |-
                   McpAuthSecretRef references a Kubernetes Secret containing the MCP authentication token
-                  When configured, the controller will include "Authorization: Bearer <token>" header in MCP requests
+                  The controller will include "Authorization: Bearer <token>" header in MCP requests
                   The Secret must exist in the same namespace as the ResourceSyncConfig
                 properties:
                   key:
@@ -101,6 +101,7 @@ spec:
                 minimum: 1
                 type: integer
             required:
+            - mcpAuthSecretRef
             - mcpEndpoint
             type: object
           status:
