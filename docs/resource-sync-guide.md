@@ -24,7 +24,7 @@ kind: ResourceSyncConfig
 metadata:
   name: default-sync
 spec:
-  mcpEndpoint: http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/resources/sync
+  mcpEndpoint: http://dot-ai.dot-ai.svc.cluster.local:3456/api/v1/resources/sync
   debounceWindowSeconds: 10
   resyncIntervalMinutes: 60
 ```
@@ -152,7 +152,7 @@ metadata:
   name: production-sync
 spec:
   # MCP endpoint for resource sync
-  mcpEndpoint: http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/resources/sync
+  mcpEndpoint: http://dot-ai.dot-ai.svc.cluster.local:3456/api/v1/resources/sync
 
   # Batch changes for 10 seconds before syncing
   debounceWindowSeconds: 10
