@@ -643,6 +643,83 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(readyCondition.Reason).To(Equal("WatcherActive"))
+
+			// Verify sync timestamps are set after initial sync (async operation)
+			Eventually(func(g Gomega) {
+				freshConfig := &dotaiv1alpha1.ResourceSyncConfig{}
+				g.Expect(k8sClient.Get(testCtx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, freshConfig)).To(Succeed())
+				g.Expect(freshConfig.Status.LastSyncTime).NotTo(BeNil(), "LastSyncTime should be set after initial sync")
+				g.Expect(freshConfig.Status.LastResyncTime).NotTo(BeNil(), "LastResyncTime should be set after initial sync")
+			}, 30*time.Second, 500*time.Millisecond).Should(Succeed())
+		})
+
+		It("should update LastSyncTime from debounce buffer flush", func() {
+			// Create a ResourceSyncConfig
+			config := &dotaiv1alpha1.ResourceSyncConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-config-debounce-sync-" + randString(5),
+					Namespace: "default",
+				},
+				Spec: dotaiv1alpha1.ResourceSyncConfigSpec{
+					McpEndpoint: "https://mcp.example.com/resources/sync",
+				},
+			}
+
+			Expect(k8sClient.Create(testCtx, config)).To(Succeed())
+
+			configKey := config.Namespace + "/" + config.Name
+			defer func() {
+				reconciler.stopWatcher(configKey)
+				_ = k8sClient.Delete(testCtx, config)
+			}()
+
+			// First reconcile to start the watcher
+			_, err := reconciler.Reconcile(testCtx, ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      config.Name,
+					Namespace: config.Namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait for initial sync to set LastSyncTime
+			var initialSyncTime *metav1.Time
+			Eventually(func(g Gomega) {
+				freshConfig := &dotaiv1alpha1.ResourceSyncConfig{}
+				g.Expect(k8sClient.Get(testCtx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, freshConfig)).To(Succeed())
+				g.Expect(freshConfig.Status.LastSyncTime).NotTo(BeNil(), "LastSyncTime should be set after initial sync")
+				initialSyncTime = freshConfig.Status.LastSyncTime
+			}, 30*time.Second, 500*time.Millisecond).Should(Succeed())
+
+			// Get the active config state and set a more recent lastFlushTime on the debounce buffer
+			reconciler.configsMu.RLock()
+			state, exists := reconciler.activeConfigs[configKey]
+			reconciler.configsMu.RUnlock()
+			Expect(exists).To(BeTrue(), "Config should be active")
+			Expect(state.debounceBuffer).NotTo(BeNil(), "Debounce buffer should exist")
+
+			// Set lastFlushTime to 1 minute in the future
+			futureFlushTime := time.Now().Add(1 * time.Minute)
+			state.debounceBuffer.SetLastFlushTimeForTesting(futureFlushTime)
+
+			// Reconcile again - should update LastSyncTime from debounce buffer
+			_, err = reconciler.Reconcile(testCtx, ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      config.Name,
+					Namespace: config.Namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify LastSyncTime was updated to match the debounce buffer's lastFlushTime
+			updatedConfig := &dotaiv1alpha1.ResourceSyncConfig{}
+			Expect(k8sClient.Get(testCtx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, updatedConfig)).To(Succeed())
+			Expect(updatedConfig.Status.LastSyncTime).NotTo(BeNil(), "LastSyncTime should still be set")
+			Expect(updatedConfig.Status.LastSyncTime.Time.After(initialSyncTime.Time)).To(BeTrue(),
+				"LastSyncTime should be updated to a more recent time from debounce buffer flush")
+			// Allow 1 second tolerance for time comparison
+			Expect(updatedConfig.Status.LastSyncTime.Time.Sub(futureFlushTime).Abs()).To(BeNumerically("<", time.Second),
+				"LastSyncTime should match the debounce buffer's lastFlushTime")
 		})
 	})
 

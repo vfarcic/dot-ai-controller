@@ -211,7 +211,7 @@ func (r *ResourceSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Initialize clients if not already done
 	if err := r.ensureClients(); err != nil {
 		logger.Error(err, "Failed to initialize clients")
-		r.updateStatus(ctx, &config, false, 0, err.Error())
+		r.updateStatus(ctx, &config, false, 0, err.Error(), time.Time{})
 		return ctrl.Result{}, err
 	}
 
@@ -231,17 +231,19 @@ func (r *ResourceSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			watchedCount := len(existingState.activeInformers)
 			existingState.informersMu.RUnlock()
 
-			// Check debounce buffer for sync errors
+			// Check debounce buffer for sync errors and get last flush time
 			lastError := ""
+			var lastFlushTime time.Time
 			if existingState.debounceBuffer != nil {
 				metrics := existingState.debounceBuffer.GetMetrics()
+				lastFlushTime = metrics.LastFlushTime
 				if metrics.LastError != "" {
 					lastError = metrics.LastError
 					// Increment sync errors when we detect an error from debounce buffer
 					r.updateSyncErrorCount(ctx, &config)
 				}
 			}
-			r.updateStatus(ctx, &config, true, watchedCount, lastError)
+			r.updateStatus(ctx, &config, true, watchedCount, lastError, lastFlushTime)
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 	}
@@ -249,7 +251,7 @@ func (r *ResourceSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Start a new watcher for this config
 	if err := r.startWatcher(ctx, &config); err != nil {
 		logger.Error(err, "Failed to start resource watcher")
-		r.updateStatus(ctx, &config, false, 0, err.Error())
+		r.updateStatus(ctx, &config, false, 0, err.Error(), time.Time{})
 		r.Recorder.Eventf(&config, corev1.EventTypeWarning, "WatcherFailed",
 			"Failed to start resource watcher: %v", err)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -416,7 +418,7 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 	state.informersMu.RLock()
 	watchedCount := len(state.activeInformers)
 	state.informersMu.RUnlock()
-	r.updateStatus(ctx, config, true, watchedCount, "")
+	r.updateStatus(ctx, config, true, watchedCount, "", time.Time{})
 
 	return nil
 }
@@ -985,7 +987,7 @@ func (r *ResourceSyncReconciler) updateSyncErrorCount(ctx context.Context, confi
 }
 
 // updateStatus updates the ResourceSyncConfig status
-func (r *ResourceSyncReconciler) updateStatus(ctx context.Context, config *dotaiv1alpha1.ResourceSyncConfig, active bool, watchedTypes int, lastError string) {
+func (r *ResourceSyncReconciler) updateStatus(ctx context.Context, config *dotaiv1alpha1.ResourceSyncConfig, active bool, watchedTypes int, lastError string, lastFlushTime time.Time) {
 	logger := logf.FromContext(ctx)
 
 	// Fetch fresh copy to avoid conflicts
@@ -999,6 +1001,14 @@ func (r *ResourceSyncReconciler) updateStatus(ctx context.Context, config *dotai
 	fresh.Status.Active = active
 	fresh.Status.WatchedResourceTypes = watchedTypes
 	fresh.Status.LastError = lastError
+
+	// Update LastSyncTime from debounce buffer's lastFlushTime if it's more recent
+	if !lastFlushTime.IsZero() {
+		flushMetaTime := metav1.NewTime(lastFlushTime)
+		if fresh.Status.LastSyncTime == nil || lastFlushTime.After(fresh.Status.LastSyncTime.Time) {
+			fresh.Status.LastSyncTime = &flushMetaTime
+		}
+	}
 
 	// Update Ready condition
 	now := metav1.NewTime(time.Now())
@@ -1176,6 +1186,7 @@ func (r *ResourceSyncReconciler) performInitialSync(ctx context.Context, state *
 
 	now := metav1.NewTime(time.Now())
 	config.Status.LastResyncTime = &now
+	config.Status.LastSyncTime = &now
 
 	if err != nil {
 		config.Status.SyncErrors++

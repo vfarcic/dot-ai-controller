@@ -304,3 +304,10 @@ func (b *DebounceBuffer) PendingCount() int {
 func (b *DebounceBuffer) SetMCPClient(client *MCPResourceSyncClient) {
 	b.mcpClient = client
 }
+
+// SetLastFlushTimeForTesting sets the lastFlushTime for testing purposes
+func (b *DebounceBuffer) SetLastFlushTimeForTesting(t time.Time) {
+	b.metricsMu.Lock()
+	defer b.metricsMu.Unlock()
+	b.lastFlushTime = t
+}

@@ -1728,6 +1728,24 @@ spec:
 					g.Expect(output).To(Equal("True"), "Ready condition should be True")
 				}).Should(Succeed())
 
+				By("verifying lastSyncTime is set after initial sync")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-status-config",
+						"-n", testNamespace, "-o", "jsonpath={.status.lastSyncTime}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).NotTo(BeEmpty(), "lastSyncTime should be set after initial sync")
+				}, 60*time.Second).Should(Succeed())
+
+				By("verifying lastResyncTime is set after initial sync")
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "resourcesyncconfig", "test-status-config",
+						"-n", testNamespace, "-o", "jsonpath={.status.lastResyncTime}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).NotTo(BeEmpty(), "lastResyncTime should be set after initial sync")
+				}, 60*time.Second).Should(Succeed())
+
 				By("cleaning up")
 				cmd = exec.Command("kubectl", "delete", "resourcesyncconfig", "test-status-config", "-n", testNamespace)
 				_, _ = utils.Run(cmd)
