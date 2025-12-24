@@ -11,6 +11,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -141,10 +142,9 @@ func (r *CapabilityScanReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	r.activeConfigs[key] = state
 	r.configsMu.Unlock()
 
-	// Perform initial check and scan
-	if !config.Status.InitialScanComplete {
-		go r.performInitialScan(context.Background(), state, key)
-	}
+	// Always perform startup reconciliation to sync cluster CRDs with MCP capabilities
+	// This handles: fresh installs, pod restarts, and missed CRD events during downtime
+	go r.performStartupReconciliation(context.Background(), state, key)
 
 	r.updateStatus(ctx, &config, true, "")
 	r.Recorder.Event(&config, corev1.EventTypeNormal, "ConfigActivated",
@@ -205,56 +205,118 @@ func (r *CapabilityScanReconciler) removeConfig(key string) {
 	delete(r.activeConfigs, key)
 }
 
-// performInitialScan checks for existing capabilities and triggers full scan if empty
-func (r *CapabilityScanReconciler) performInitialScan(ctx context.Context, state *capabilityScanState, configKey string) {
+// performStartupReconciliation reconciles cluster CRDs with MCP capabilities on startup
+// It computes the diff between cluster state and MCP state, then:
+// - If MCP is empty: triggers a full scan
+// - Otherwise: scans missing CRDs and deletes orphaned capabilities
+func (r *CapabilityScanReconciler) performStartupReconciliation(ctx context.Context, state *capabilityScanState, configKey string) {
 	logger := logf.Log.WithName("capabilityscan")
 
-	logger.Info("Checking for existing capabilities", "config", configKey)
+	logger.Info("Starting reconciliation", "config", configKey)
 
-	// Check if capabilities exist
-	count, err := state.mcpClient.ListCapabilities(ctx)
+	// List all CRDs in cluster (with filters applied)
+	clusterCRDs, err := r.listClusterCRDIDs(ctx, state.config)
 	if err != nil {
-		logger.Error(err, "❌ Failed to check existing capabilities")
+		logger.Error(err, "❌ Failed to list cluster CRDs")
 		r.updateStatusByKey(ctx, configKey, false, err.Error())
 		return
 	}
+	logger.Info("Found cluster CRDs", "count", len(clusterCRDs))
 
-	logger.Info("Found existing capabilities", "count", count)
+	// List all capability IDs from MCP
+	mcpCapabilities, err := state.mcpClient.ListCapabilityIDs(ctx)
+	if err != nil {
+		logger.Error(err, "❌ Failed to list MCP capabilities")
+		r.updateStatusByKey(ctx, configKey, false, err.Error())
+		return
+	}
+	logger.Info("Found MCP capabilities", "count", len(mcpCapabilities))
 
-	if count == 0 {
-		// No capabilities exist, trigger full scan
-		logger.Info("No capabilities found, triggering full scan")
+	// If MCP is empty, trigger full scan
+	if len(mcpCapabilities) == 0 {
+		logger.Info("No capabilities in MCP, triggering full scan")
 		if err := state.mcpClient.TriggerFullScan(ctx); err != nil {
 			logger.Error(err, "❌ Failed to trigger full scan")
 			r.updateStatusByKey(ctx, configKey, false, err.Error())
 			return
 		}
 		logger.Info("✅ Full scan triggered successfully")
-	}
-
-	// Mark initial scan as complete
-	r.markInitialScanComplete(ctx, configKey)
-}
-
-// markInitialScanComplete updates the status to indicate initial scan is done
-func (r *CapabilityScanReconciler) markInitialScanComplete(ctx context.Context, key string) {
-	logger := logf.Log.WithName("capabilityscan")
-
-	namespace, name := parseConfigKey(key)
-	var config dotaiv1alpha1.CapabilityScanConfig
-	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &config); err != nil {
-		logger.Error(err, "Failed to fetch CapabilityScanConfig for status update")
+		r.updateLastScanTime(ctx, configKey)
 		return
 	}
 
-	config.Status.InitialScanComplete = true
-	now := metav1.NewTime(time.Now())
-	config.Status.LastScanTime = &now
-	config.Status.LastError = ""
+	// Compute diff
+	toScan, toDelete := computeCapabilityDiff(clusterCRDs, mcpCapabilities)
 
-	if err := r.Status().Update(ctx, &config); err != nil {
-		logger.Error(err, "Failed to update status after initial scan")
+	logger.Info("Computed capability diff",
+		"toScan", len(toScan),
+		"toDelete", len(toDelete),
+	)
+
+	// Scan missing CRDs (if any)
+	if len(toScan) > 0 {
+		resourceList := strings.Join(toScan, ",")
+		logger.Info("Scanning missing CRDs", "count", len(toScan), "resources", resourceList)
+		if err := state.mcpClient.TriggerScan(ctx, resourceList); err != nil {
+			logger.Error(err, "❌ Failed to trigger targeted scan")
+			r.updateStatusByKey(ctx, configKey, false, err.Error())
+			// Continue to delete orphaned capabilities even if scan fails
+		} else {
+			logger.Info("✅ Targeted scan triggered successfully")
+		}
 	}
+
+	// Delete orphaned capabilities (if any)
+	if len(toDelete) > 0 {
+		logger.Info("Deleting orphaned capabilities", "count", len(toDelete))
+		for _, id := range toDelete {
+			if err := state.mcpClient.DeleteCapability(ctx, id); err != nil {
+				logger.Error(err, "❌ Failed to delete orphaned capability", "id", id)
+				// Continue deleting others even if one fails
+			} else {
+				logger.V(1).Info("Deleted orphaned capability", "id", id)
+			}
+		}
+		logger.Info("✅ Orphaned capabilities cleanup complete")
+	}
+
+	if len(toScan) == 0 && len(toDelete) == 0 {
+		logger.Info("✅ Cluster and MCP are in sync, no action needed")
+	}
+
+	r.updateLastScanTime(ctx, configKey)
+}
+
+// computeCapabilityDiff computes the difference between cluster CRDs and MCP capabilities
+// Returns: (toScan, toDelete) where:
+// - toScan: CRDs in cluster but not in MCP (need to be scanned)
+// - toDelete: capabilities in MCP but not in cluster (need to be deleted)
+func computeCapabilityDiff(clusterCRDs, mcpCapabilities []string) (toScan, toDelete []string) {
+	clusterSet := make(map[string]struct{}, len(clusterCRDs))
+	for _, id := range clusterCRDs {
+		clusterSet[id] = struct{}{}
+	}
+
+	mcpSet := make(map[string]struct{}, len(mcpCapabilities))
+	for _, id := range mcpCapabilities {
+		mcpSet[id] = struct{}{}
+	}
+
+	// CRDs in cluster but not in MCP → need to scan
+	for _, id := range clusterCRDs {
+		if _, exists := mcpSet[id]; !exists {
+			toScan = append(toScan, id)
+		}
+	}
+
+	// Capabilities in MCP but not in cluster → need to delete
+	for _, id := range mcpCapabilities {
+		if _, exists := clusterSet[id]; !exists {
+			toDelete = append(toDelete, id)
+		}
+	}
+
+	return toScan, toDelete
 }
 
 // HandleCRDEvent processes CRD create/delete events by queuing them to the debounce buffer
@@ -315,6 +377,24 @@ func buildCapabilityID(crd *apiextensionsv1.CustomResourceDefinition) string {
 		return kind
 	}
 	return kind + "." + group
+}
+
+// listClusterCRDIDs lists all CRDs in the cluster and returns their capability IDs
+func (r *CapabilityScanReconciler) listClusterCRDIDs(ctx context.Context, config *dotaiv1alpha1.CapabilityScanConfig) ([]string, error) {
+	var crdList apiextensionsv1.CustomResourceDefinitionList
+	if err := r.List(ctx, &crdList); err != nil {
+		return nil, fmt.Errorf("failed to list CRDs: %w", err)
+	}
+
+	var ids []string
+	for _, crd := range crdList.Items {
+		id := buildCapabilityID(&crd)
+		// Apply include/exclude filters
+		if r.shouldProcessResource(config, id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }
 
 // shouldProcessResource checks if a resource matches include/exclude filters

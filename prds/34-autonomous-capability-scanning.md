@@ -25,7 +25,7 @@ This reactive scanning model doesn't align with Kubernetes' event-driven archite
 
 Deploy a Kubernetes controller that autonomously manages capability scanning by:
 
-1. **Initial Discovery**: On startup, check if capabilities exist in the database via MCP server; if not, initiate full cluster scan
+1. **Startup Reconciliation**: On startup, compare cluster CRDs with MCP capabilities and sync differences (full scan only if MCP is empty; otherwise targeted scan for missing CRDs and cleanup of orphaned capabilities)
 2. **Event-Driven Updates**: Watch Kubernetes API for CRD and resource definition changes (create/update/delete events)
 3. **MCP Coordination**: Send HTTP requests to MCP server's `manageOrgData` tool to scan or remove capabilities
 4. **Resilient Operation**: Retry failed operations and expose metrics for observability
@@ -371,15 +371,13 @@ type RetryConfig struct {
 **Deliverable**: Production-ready controller with full observability
 
 - [x] Implement debounce buffer for batching CRD events (configurable window, reduces MCP calls)
-- [ ] Add Prometheus metrics (scans triggered, success/failure rates, queue depth)
-- [ ] Implement health endpoints (liveness, readiness) with proper checks
+- [~] Add Prometheus metrics (scans triggered, success/failure rates, queue depth) - deferred: project has no custom Prometheus metrics pattern yet
+- [~] Implement health endpoints (liveness, readiness) with proper checks - not applicable: manager already provides health endpoints; adding MCP-specific checks would affect unrelated controllers
 - [ ] Add dead letter queue logging for permanent failures
 - [ ] Create runbook documentation for common failure scenarios
 
 **Success Criteria**:
 - Controller handles MCP server downtime gracefully (queues events, retries)
-- Metrics accurately reflect operation counts and latencies
-- Health checks correctly report controller state
 - Failed events are logged with sufficient detail for debugging
 
 ### Milestone 4: Helm Chart & Release
@@ -556,3 +554,38 @@ type RetryConfig struct {
 - Removed unused metrics from buffer (YAGNI - can add with Prometheus later)
 - All tests passing (268/268)
 - Milestone 3 first task complete
+
+### 2025-12-24: Design Decision - Prometheus Metrics Deferred
+- **Decision**: Defer Prometheus metrics implementation for CapabilityScan controller
+- **Rationale**: Project has no custom Prometheus metrics in any existing controller (Solution, RemediationPolicy, ResourceSync). Adding metrics would establish a new pattern that should be done consistently across all controllers, not just this one.
+- **Impact**: Milestone 3 "Add Prometheus metrics" task marked as deferred `[~]`
+- **Future**: When the project decides to add Prometheus metrics, it should be done as a cross-cutting concern for all controllers simultaneously
+
+### 2025-12-24: Design Decision - Health Endpoints Not Applicable
+- **Decision**: Mark health endpoints task as not applicable for CapabilityScan controller
+- **Rationale**: The controller-runtime manager already provides `/healthz` and `/readyz` endpoints at the Pod level. All controllers (Solution, RemediationPolicy, ResourceSyncConfig, CapabilityScanConfig) run in a single manager/Pod. Adding MCP-specific health checks would cause the entire Pod to become unhealthy when MCP is down, even though unrelated controllers (like Solution) would still function correctly.
+- **Impact**: Milestone 3 "Implement health endpoints" task marked as not applicable `[~]`
+- **Architecture Note**: Health is managed at the manager level, not per-controller. MCP connectivity issues should be surfaced via logs and status conditions, not health endpoints.
+
+### 2025-12-24: Startup Reconciliation Implementation
+- **Problem Identified**: Original design only triggered full scan if MCP had zero capabilities. If pod restarted after capabilities existed, any CRDs created during downtime would be missed.
+- **Solution**: Implemented diff-and-sync reconciliation on every startup:
+  1. List all CRDs in cluster (with include/exclude filters applied)
+  2. List all capability IDs from MCP
+  3. If MCP is empty → trigger full scan (fresh install case)
+  4. Otherwise → compute diff:
+     - CRDs in cluster but not in MCP → targeted scan
+     - Capabilities in MCP but not in cluster → delete orphaned
+  5. If both match → no action needed (already in sync)
+- **Implementation Details**:
+  - Added `ListCapabilityIDs()` method to MCP client (returns actual IDs, not just count)
+  - Added `listClusterCRDIDs()` method to list cluster CRDs with filtering
+  - Renamed `performInitialScan` to `performStartupReconciliation` with new logic
+  - Added `computeCapabilityDiff()` helper for set difference calculations
+  - Removed `InitialScanComplete` status check - now always reconciles on startup
+- **Benefits**:
+  - Handles pod restarts gracefully (no missed CRDs)
+  - Avoids expensive full scans when only delta sync is needed
+  - Full scan still used for fresh installs (MCP empty)
+- **Tests**: Added comprehensive unit tests for `computeCapabilityDiff` and `ListCapabilityIDs`
+- All tests passing

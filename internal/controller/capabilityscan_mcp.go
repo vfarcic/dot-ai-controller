@@ -34,17 +34,22 @@ type ManageOrgDataRequest struct {
 	Limit        int    `json:"limit,omitempty"`        // For list operation
 }
 
+// CapabilityInfo represents a capability returned from MCP
+type CapabilityInfo struct {
+	ID string `json:"id"`
+}
+
 // ManageOrgDataResponse is the response from POST /api/v1/tools/manageOrgData
 type ManageOrgDataResponse struct {
 	Success bool `json:"success"`
 	Data    *struct {
 		Result *struct {
-			Success      bool          `json:"success"`
-			Status       string        `json:"status,omitempty"`
-			Message      string        `json:"message,omitempty"`
-			Capabilities []interface{} `json:"capabilities,omitempty"`
-			TotalCount   int           `json:"totalCount,omitempty"`
-			Operation    string        `json:"operation,omitempty"`
+			Success      bool             `json:"success"`
+			Status       string           `json:"status,omitempty"`
+			Message      string           `json:"message,omitempty"`
+			Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+			TotalCount   int              `json:"totalCount,omitempty"`
+			Operation    string           `json:"operation,omitempty"`
 		} `json:"result,omitempty"`
 	} `json:"data,omitempty"`
 	Error *struct {
@@ -75,6 +80,20 @@ func (r *ManageOrgDataResponse) GetTotalCount() int {
 		return r.Data.Result.TotalCount
 	}
 	return 0
+}
+
+// GetCapabilityIDs returns the IDs of capabilities from a list response
+func (r *ManageOrgDataResponse) GetCapabilityIDs() []string {
+	if r.Data == nil || r.Data.Result == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(r.Data.Result.Capabilities))
+	for _, cap := range r.Data.Result.Capabilities {
+		if cap.ID != "" {
+			ids = append(ids, cap.ID)
+		}
+	}
+	return ids
 }
 
 // MCPCapabilityScanClient handles HTTP communication with the MCP capability scan endpoint
@@ -163,6 +182,29 @@ func (c *MCPCapabilityScanClient) ListCapabilities(ctx context.Context) (int, er
 	}
 
 	return resp.GetTotalCount(), nil
+}
+
+// ListCapabilityIDs returns all capability IDs from the database
+func (c *MCPCapabilityScanClient) ListCapabilityIDs(ctx context.Context) ([]string, error) {
+	// Use a large limit to get all capabilities
+	// Most clusters have < 1000 CRDs, so this should be sufficient
+	req := ManageOrgDataRequest{
+		DataType:   "capabilities",
+		Operation:  "list",
+		Collection: c.collection,
+		Limit:      10000,
+	}
+
+	resp, err := c.sendWithRetry(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	if !resp.Success {
+		return nil, fmt.Errorf("MCP returned error: %s", resp.GetErrorMessage())
+	}
+
+	return resp.GetCapabilityIDs(), nil
 }
 
 // TriggerFullScan triggers a full cluster capability scan

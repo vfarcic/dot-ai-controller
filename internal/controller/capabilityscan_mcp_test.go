@@ -25,21 +25,21 @@ func TestMCPCapabilityScanClient_ListCapabilities(t *testing.T) {
 				Success: true,
 				Data: &struct {
 					Result *struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					} `json:"result,omitempty"`
 				}{
 					Result: &struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					}{
 						Success:    true,
 						TotalCount: 150,
@@ -56,21 +56,21 @@ func TestMCPCapabilityScanClient_ListCapabilities(t *testing.T) {
 				Success: true,
 				Data: &struct {
 					Result *struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					} `json:"result,omitempty"`
 				}{
 					Result: &struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					}{
 						Success:    true,
 						TotalCount: 0,
@@ -156,6 +156,134 @@ func TestMCPCapabilityScanClient_ListCapabilities(t *testing.T) {
 	}
 }
 
+func TestMCPCapabilityScanClient_ListCapabilityIDs(t *testing.T) {
+	tests := []struct {
+		name           string
+		serverResponse string // JSON response
+		serverStatus   int
+		wantIDs        []string
+		wantErr        bool
+	}{
+		{
+			name: "successful list with capabilities",
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": true,
+						"capabilities": [
+							{"id": "RDSInstance.database.aws.crossplane.io"},
+							{"id": "Bucket.s3.aws.crossplane.io"},
+							{"id": "Deployment.apps"}
+						],
+						"totalCount": 3
+					}
+				}
+			}`,
+			serverStatus: http.StatusOK,
+			wantIDs:      []string{"RDSInstance.database.aws.crossplane.io", "Bucket.s3.aws.crossplane.io", "Deployment.apps"},
+			wantErr:      false,
+		},
+		{
+			name: "successful list with empty capabilities",
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": true,
+						"capabilities": [],
+						"totalCount": 0
+					}
+				}
+			}`,
+			serverStatus: http.StatusOK,
+			wantIDs:      []string{},
+			wantErr:      false,
+		},
+		{
+			name: "successful list with nil capabilities",
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": true,
+						"totalCount": 0
+					}
+				}
+			}`,
+			serverStatus: http.StatusOK,
+			wantIDs:      []string{},
+			wantErr:      false,
+		},
+		{
+			name: "server error",
+			serverResponse: `{
+				"success": false,
+				"error": {
+					"code": "500",
+					"message": "Internal server error"
+				}
+			}`,
+			serverStatus: http.StatusOK,
+			wantIDs:      nil,
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Verify request
+				var req ManageOrgDataRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Errorf("Failed to decode request: %v", err)
+				}
+
+				// Verify request fields
+				if req.DataType != "capabilities" {
+					t.Errorf("Expected dataType=capabilities, got %s", req.DataType)
+				}
+				if req.Operation != "list" {
+					t.Errorf("Expected operation=list, got %s", req.Operation)
+				}
+				// ListCapabilityIDs should use a large limit
+				if req.Limit < 1000 {
+					t.Errorf("Expected large limit for ListCapabilityIDs, got %d", req.Limit)
+				}
+
+				w.WriteHeader(tt.serverStatus)
+				w.Write([]byte(tt.serverResponse))
+			}))
+			defer server.Close()
+
+			client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
+				Endpoint:       server.URL,
+				Collection:     "test-capabilities",
+				MaxRetries:     ptr.To(0),
+				InitialBackoff: 10 * time.Millisecond,
+			})
+
+			ids, err := client.ListCapabilityIDs(context.Background())
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ListCapabilityIDs() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if len(ids) != len(tt.wantIDs) {
+					t.Errorf("ListCapabilityIDs() returned %d IDs, want %d", len(ids), len(tt.wantIDs))
+				}
+				for i, id := range ids {
+					if i < len(tt.wantIDs) && id != tt.wantIDs[i] {
+						t.Errorf("ListCapabilityIDs()[%d] = %s, want %s", i, id, tt.wantIDs[i])
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestMCPCapabilityScanClient_TriggerFullScan(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -169,21 +297,21 @@ func TestMCPCapabilityScanClient_TriggerFullScan(t *testing.T) {
 				Success: true,
 				Data: &struct {
 					Result *struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					} `json:"result,omitempty"`
 				}{
 					Result: &struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					}{
 						Success: true,
 						Status:  "started",
@@ -263,21 +391,21 @@ func TestMCPCapabilityScanClient_TriggerScan(t *testing.T) {
 				Success: true,
 				Data: &struct {
 					Result *struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					} `json:"result,omitempty"`
 				}{
 					Result: &struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					}{
 						Success: true,
 						Status:  "started",
@@ -354,21 +482,21 @@ func TestMCPCapabilityScanClient_DeleteCapability(t *testing.T) {
 				Success: true,
 				Data: &struct {
 					Result *struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					} `json:"result,omitempty"`
 				}{
 					Result: &struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					}{
 						Success:   true,
 						Operation: "delete",
@@ -459,21 +587,21 @@ func TestMCPCapabilityScanClient_RetryBehavior(t *testing.T) {
 			Success: true,
 			Data: &struct {
 				Result *struct {
-					Success      bool          `json:"success"`
-					Status       string        `json:"status,omitempty"`
-					Message      string        `json:"message,omitempty"`
-					Capabilities []interface{} `json:"capabilities,omitempty"`
-					TotalCount   int           `json:"totalCount,omitempty"`
-					Operation    string        `json:"operation,omitempty"`
+					Success      bool             `json:"success"`
+					Status       string           `json:"status,omitempty"`
+					Message      string           `json:"message,omitempty"`
+					Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+					TotalCount   int              `json:"totalCount,omitempty"`
+					Operation    string           `json:"operation,omitempty"`
 				} `json:"result,omitempty"`
 			}{
 				Result: &struct {
-					Success      bool          `json:"success"`
-					Status       string        `json:"status,omitempty"`
-					Message      string        `json:"message,omitempty"`
-					Capabilities []interface{} `json:"capabilities,omitempty"`
-					TotalCount   int           `json:"totalCount,omitempty"`
-					Operation    string        `json:"operation,omitempty"`
+					Success      bool             `json:"success"`
+					Status       string           `json:"status,omitempty"`
+					Message      string           `json:"message,omitempty"`
+					Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+					TotalCount   int              `json:"totalCount,omitempty"`
+					Operation    string           `json:"operation,omitempty"`
 				}{
 					Success:    true,
 					TotalCount: 10,
@@ -576,21 +704,21 @@ func TestManageOrgDataResponse_GetErrorMessage(t *testing.T) {
 			response: ManageOrgDataResponse{
 				Data: &struct {
 					Result *struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					} `json:"result,omitempty"`
 				}{
 					Result: &struct {
-						Success      bool          `json:"success"`
-						Status       string        `json:"status,omitempty"`
-						Message      string        `json:"message,omitempty"`
-						Capabilities []interface{} `json:"capabilities,omitempty"`
-						TotalCount   int           `json:"totalCount,omitempty"`
-						Operation    string        `json:"operation,omitempty"`
+						Success      bool             `json:"success"`
+						Status       string           `json:"status,omitempty"`
+						Message      string           `json:"message,omitempty"`
+						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
+						TotalCount   int              `json:"totalCount,omitempty"`
+						Operation    string           `json:"operation,omitempty"`
 					}{
 						Message: "Result message",
 					},

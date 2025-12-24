@@ -424,6 +424,109 @@ func TestStringSlicesEqual(t *testing.T) {
 	}
 }
 
+func TestComputeCapabilityDiff(t *testing.T) {
+	tests := []struct {
+		name            string
+		clusterCRDs     []string
+		mcpCapabilities []string
+		wantToScan      []string
+		wantToDelete    []string
+	}{
+		{
+			name:            "both empty",
+			clusterCRDs:     []string{},
+			mcpCapabilities: []string{},
+			wantToScan:      nil,
+			wantToDelete:    nil,
+		},
+		{
+			name:            "cluster has CRDs, MCP empty",
+			clusterCRDs:     []string{"A.group", "B.group", "C.group"},
+			mcpCapabilities: []string{},
+			wantToScan:      []string{"A.group", "B.group", "C.group"},
+			wantToDelete:    nil,
+		},
+		{
+			name:            "cluster empty, MCP has capabilities",
+			clusterCRDs:     []string{},
+			mcpCapabilities: []string{"X.group", "Y.group"},
+			wantToScan:      nil,
+			wantToDelete:    []string{"X.group", "Y.group"},
+		},
+		{
+			name:            "in sync",
+			clusterCRDs:     []string{"A.group", "B.group", "C.group"},
+			mcpCapabilities: []string{"A.group", "B.group", "C.group"},
+			wantToScan:      nil,
+			wantToDelete:    nil,
+		},
+		{
+			name:            "missing CRDs in MCP",
+			clusterCRDs:     []string{"A.group", "B.group", "C.group", "D.group"},
+			mcpCapabilities: []string{"A.group", "B.group"},
+			wantToScan:      []string{"C.group", "D.group"},
+			wantToDelete:    nil,
+		},
+		{
+			name:            "orphaned capabilities in MCP",
+			clusterCRDs:     []string{"A.group", "B.group"},
+			mcpCapabilities: []string{"A.group", "B.group", "C.group", "D.group"},
+			wantToScan:      nil,
+			wantToDelete:    []string{"C.group", "D.group"},
+		},
+		{
+			name:            "mixed changes",
+			clusterCRDs:     []string{"A.group", "B.group", "D.group"},
+			mcpCapabilities: []string{"A.group", "B.group", "C.group"},
+			wantToScan:      []string{"D.group"},
+			wantToDelete:    []string{"C.group"},
+		},
+		{
+			name:            "complete replacement",
+			clusterCRDs:     []string{"X.group", "Y.group"},
+			mcpCapabilities: []string{"A.group", "B.group"},
+			wantToScan:      []string{"X.group", "Y.group"},
+			wantToDelete:    []string{"A.group", "B.group"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotToScan, gotToDelete := computeCapabilityDiff(tt.clusterCRDs, tt.mcpCapabilities)
+
+			// Compare toScan
+			if len(gotToScan) != len(tt.wantToScan) {
+				t.Errorf("toScan length = %v, want %v", len(gotToScan), len(tt.wantToScan))
+			} else {
+				toScanSet := make(map[string]bool)
+				for _, s := range gotToScan {
+					toScanSet[s] = true
+				}
+				for _, want := range tt.wantToScan {
+					if !toScanSet[want] {
+						t.Errorf("toScan missing %v", want)
+					}
+				}
+			}
+
+			// Compare toDelete
+			if len(gotToDelete) != len(tt.wantToDelete) {
+				t.Errorf("toDelete length = %v, want %v", len(gotToDelete), len(tt.wantToDelete))
+			} else {
+				toDeleteSet := make(map[string]bool)
+				for _, s := range gotToDelete {
+					toDeleteSet[s] = true
+				}
+				for _, want := range tt.wantToDelete {
+					if !toDeleteSet[want] {
+						t.Errorf("toDelete missing %v", want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestConfigChanged(t *testing.T) {
 	reconciler := &CapabilityScanReconciler{}
 
