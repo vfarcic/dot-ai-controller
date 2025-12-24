@@ -1,7 +1,7 @@
 # PRD: Autonomous Capability Scanning Controller
 
 **Issue**: #34
-**Status**: Draft
+**Status**: In Progress
 **Priority**: High
 **Created**: 2025-12-24
 **Last Updated**: 2025-12-24
@@ -340,9 +340,9 @@ type RetryConfig struct {
 ### Milestone 1: Controller Foundation
 **Deliverable**: Working controller that watches API resources and logs events
 
-- [ ] Implement Kubebuilder scaffold with CRD for `CapabilityScanConfig`
-- [ ] Build event watcher for all API resources (CRDs + built-in types)
-- [ ] Implement include/exclude filtering logic with wildcard support
+- [x] Implement Kubebuilder scaffold with CRD for `CapabilityScanConfig`
+- [x] Build event watcher for all API resources (CRDs + built-in types)
+- [x] Implement include/exclude filtering logic with wildcard support
 - [ ] Add structured logging and basic metrics (events watched, filtered)
 
 **Success Criteria**:
@@ -354,12 +354,12 @@ type RetryConfig struct {
 ### Milestone 2: MCP Server Integration
 **Deliverable**: Controller successfully communicates with MCP server
 
-- [ ] Implement HTTP client with retry logic (exponential backoff)
-- [ ] Build startup reconciler that checks for existing capabilities via `list` operation
-- [ ] Implement fire-and-forget scan triggering via `resourceList` parameter
-- [ ] Implement fire-and-forget full scan via `mode: "full"` on startup if empty
-- [ ] Implement delete operation for removed resources
-- [ ] Add integration tests with mock MCP server
+- [x] Implement HTTP client with retry logic (exponential backoff)
+- [x] Build startup reconciler that checks for existing capabilities via `list` operation
+- [x] Implement fire-and-forget scan triggering via `resourceList` parameter
+- [x] Implement fire-and-forget full scan via `mode: "full"` on startup if empty
+- [x] Implement delete operation for removed resources
+- [x] Add integration tests with mock MCP server
 
 **Success Criteria**:
 - Controller successfully queries MCP for existing capabilities on startup
@@ -523,3 +523,12 @@ type RetryConfig struct {
 - Initial PRD created based on Phase 2 context from dot-ai PRD #216
 - 5 milestones defined for controller implementation
 - API documentation reflects completed Phase 1 implementation
+
+### 2025-12-24: Milestone 1 & 2 Implementation
+- Created `CapabilityScanConfig` CRD with minimal status fields (removed counters per review - belong in Prometheus)
+- Implemented controller using `Watches()` pattern for CRD events (following ResourceSyncConfig pattern)
+- Built MCP client with exponential backoff retry logic and jitter
+- Implemented include/exclude filtering with wildcard support (e.g., `*.crossplane.io`)
+- Added comprehensive unit tests for pattern matching and config change detection
+- Added MCP client tests using httptest (real HTTP server with controlled responses)
+- All tests passing (unit + integration)
