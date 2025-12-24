@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"k8s.io/utils/ptr"
 )
 
 func TestMCPCapabilityScanClient_ListCapabilities(t *testing.T) {
@@ -137,7 +139,7 @@ func TestMCPCapabilityScanClient_ListCapabilities(t *testing.T) {
 			client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
 				Endpoint:       server.URL,
 				Collection:     "test-capabilities",
-				MaxRetries:     1,
+				MaxRetries:     ptr.To(1),
 				InitialBackoff: 10 * time.Millisecond,
 			})
 
@@ -233,7 +235,7 @@ func TestMCPCapabilityScanClient_TriggerFullScan(t *testing.T) {
 			client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
 				Endpoint:       server.URL,
 				Collection:     "test-capabilities",
-				MaxRetries:     1,
+				MaxRetries:     ptr.To(1),
 				InitialBackoff: 10 * time.Millisecond,
 			})
 
@@ -324,7 +326,7 @@ func TestMCPCapabilityScanClient_TriggerScan(t *testing.T) {
 			client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
 				Endpoint:       server.URL,
 				Collection:     "test-capabilities",
-				MaxRetries:     1,
+				MaxRetries:     ptr.To(1),
 				InitialBackoff: 10 * time.Millisecond,
 			})
 
@@ -419,7 +421,7 @@ func TestMCPCapabilityScanClient_DeleteCapability(t *testing.T) {
 			client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
 				Endpoint:       server.URL,
 				Collection:     "test-capabilities",
-				MaxRetries:     1,
+				MaxRetries:     ptr.To(1),
 				InitialBackoff: 10 * time.Millisecond,
 			})
 
@@ -484,7 +486,7 @@ func TestMCPCapabilityScanClient_RetryBehavior(t *testing.T) {
 	client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
 		Endpoint:       server.URL,
 		Collection:     "test-capabilities",
-		MaxRetries:     3,
+		MaxRetries:     ptr.To(3),
 		InitialBackoff: 10 * time.Millisecond,
 		MaxBackoff:     50 * time.Millisecond,
 	})

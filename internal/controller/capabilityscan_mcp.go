@@ -98,7 +98,7 @@ type MCPCapabilityScanClientConfig struct {
 	K8sClient           client.Client
 	AuthSecretRef       dotaiv1alpha1.SecretReference
 	AuthSecretNamespace string
-	MaxRetries          int
+	MaxRetries          *int // Pointer to distinguish "not set" (nil->default 3) from "set to 0"
 	InitialBackoff      time.Duration
 	MaxBackoff          time.Duration
 }
@@ -106,8 +106,9 @@ type MCPCapabilityScanClientConfig struct {
 // NewMCPCapabilityScanClient creates a new MCP capability scan client
 func NewMCPCapabilityScanClient(cfg MCPCapabilityScanClientConfig) *MCPCapabilityScanClient {
 	// Apply defaults
-	if cfg.MaxRetries <= 0 {
-		cfg.MaxRetries = 3
+	maxRetries := 3
+	if cfg.MaxRetries != nil {
+		maxRetries = *cfg.MaxRetries
 	}
 	if cfg.InitialBackoff <= 0 {
 		cfg.InitialBackoff = 5 * time.Second
@@ -137,7 +138,7 @@ func NewMCPCapabilityScanClient(cfg MCPCapabilityScanClientConfig) *MCPCapabilit
 		k8sClient:           cfg.K8sClient,
 		authSecretRef:       cfg.AuthSecretRef,
 		authSecretNamespace: cfg.AuthSecretNamespace,
-		maxRetries:          cfg.MaxRetries,
+		maxRetries:          maxRetries,
 		initialBackoff:      cfg.InitialBackoff,
 		maxBackoff:          cfg.MaxBackoff,
 	}
@@ -336,7 +337,7 @@ func (c *MCPCapabilityScanClient) send(ctx context.Context, req ManageOrgDataReq
 	duration := time.Since(startTime)
 
 	if err != nil {
-		logger.Error(err, "HTTP request failed", "duration", duration)
+		logger.Error(err, "❌ HTTP request failed", "duration", duration)
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -371,7 +372,7 @@ func (c *MCPCapabilityScanClient) send(ctx context.Context, req ManageOrgDataReq
 	var mcpResponse ManageOrgDataResponse
 	if err := json.Unmarshal(responseBody, &mcpResponse); err != nil {
 		// If JSON parsing fails but HTTP was successful, treat as success
-		logger.Info("Response is not JSON, treating as successful",
+		logger.Info("⚠️ Response is not JSON, treating as successful",
 			"response", string(responseBody),
 			"parseError", err.Error(),
 		)
@@ -380,7 +381,7 @@ func (c *MCPCapabilityScanClient) send(ctx context.Context, req ManageOrgDataReq
 		}, nil
 	}
 
-	logger.Info("Request completed",
+	logger.Info("✅ Request completed",
 		"success", mcpResponse.Success,
 		"operation", req.Operation,
 		"duration", duration,

@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -101,7 +102,7 @@ func (r *CapabilityScanReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		K8sClient:           r.Client,
 		AuthSecretRef:       config.Spec.MCP.AuthSecretRef,
 		AuthSecretNamespace: config.Namespace,
-		MaxRetries:          config.GetMaxAttempts(),
+		MaxRetries:          ptr.To(config.GetMaxAttempts()),
 		InitialBackoff:      time.Duration(config.GetBackoffSeconds()) * time.Second,
 		MaxBackoff:          time.Duration(config.GetMaxBackoffSeconds()) * time.Second,
 	})
@@ -127,7 +128,7 @@ func (r *CapabilityScanReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	r.Recorder.Event(&config, corev1.EventTypeNormal, "ConfigActivated",
 		"CapabilityScanConfig is now active")
 
-	logger.Info("CapabilityScanConfig reconciled successfully")
+	logger.Info("✅ CapabilityScanConfig reconciled successfully")
 	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 }
 
@@ -181,7 +182,7 @@ func (r *CapabilityScanReconciler) performInitialScan(ctx context.Context, state
 	// Check if capabilities exist
 	count, err := state.mcpClient.ListCapabilities(ctx)
 	if err != nil {
-		logger.Error(err, "Failed to check existing capabilities")
+		logger.Error(err, "❌ Failed to check existing capabilities")
 		r.updateStatusByKey(ctx, configKey, false, err.Error())
 		return
 	}
@@ -192,11 +193,11 @@ func (r *CapabilityScanReconciler) performInitialScan(ctx context.Context, state
 		// No capabilities exist, trigger full scan
 		logger.Info("No capabilities found, triggering full scan")
 		if err := state.mcpClient.TriggerFullScan(ctx); err != nil {
-			logger.Error(err, "Failed to trigger full scan")
+			logger.Error(err, "❌ Failed to trigger full scan")
 			r.updateStatusByKey(ctx, configKey, false, err.Error())
 			return
 		}
-		logger.Info("Full scan triggered successfully")
+		logger.Info("✅ Full scan triggered successfully")
 	}
 
 	// Mark initial scan as complete
@@ -261,7 +262,7 @@ func (r *CapabilityScanReconciler) HandleCRDEvent(ctx context.Context, crd *apie
 			// Delete capability for this resource
 			go func(s *capabilityScanState, k string) {
 				if err := s.mcpClient.DeleteCapability(ctx, resourceID); err != nil {
-					logger.Error(err, "Failed to delete capability for CRD", "crd", crd.Name)
+					logger.Error(err, "❌ Failed to delete capability for CRD", "crd", crd.Name)
 					r.updateStatusByKey(ctx, k, false, err.Error())
 				}
 			}(state, key)
@@ -269,7 +270,7 @@ func (r *CapabilityScanReconciler) HandleCRDEvent(ctx context.Context, crd *apie
 			// Trigger scan for this resource
 			go func(s *capabilityScanState, k string) {
 				if err := s.mcpClient.TriggerScan(ctx, resourceID); err != nil {
-					logger.Error(err, "Failed to trigger scan for CRD", "crd", crd.Name)
+					logger.Error(err, "❌ Failed to trigger scan for CRD", "crd", crd.Name)
 					r.updateStatusByKey(ctx, k, false, err.Error())
 				} else {
 					r.updateLastScanTime(ctx, k)

@@ -119,7 +119,7 @@ type MCPResourceSyncClientConfig struct {
 	K8sClient           client.Client
 	AuthSecretRef       dotaiv1alpha1.SecretReference
 	AuthSecretNamespace string
-	MaxRetries          int
+	MaxRetries          *int // Pointer to distinguish "not set" (nil->default 3) from "set to 0"
 	InitialBackoff      time.Duration
 	MaxBackoff          time.Duration
 }
@@ -127,8 +127,9 @@ type MCPResourceSyncClientConfig struct {
 // NewMCPResourceSyncClient creates a new MCP resource sync client
 func NewMCPResourceSyncClient(cfg MCPResourceSyncClientConfig) *MCPResourceSyncClient {
 	// Apply defaults
-	if cfg.MaxRetries <= 0 {
-		cfg.MaxRetries = 3
+	maxRetries := 3
+	if cfg.MaxRetries != nil {
+		maxRetries = *cfg.MaxRetries
 	}
 	if cfg.InitialBackoff <= 0 {
 		cfg.InitialBackoff = 1 * time.Second
@@ -148,7 +149,7 @@ func NewMCPResourceSyncClient(cfg MCPResourceSyncClientConfig) *MCPResourceSyncC
 		k8sClient:           cfg.K8sClient,
 		authSecretRef:       cfg.AuthSecretRef,
 		authSecretNamespace: cfg.AuthSecretNamespace,
-		maxRetries:          cfg.MaxRetries,
+		maxRetries:          maxRetries,
 		initialBackoff:      cfg.InitialBackoff,
 		maxBackoff:          cfg.MaxBackoff,
 	}
