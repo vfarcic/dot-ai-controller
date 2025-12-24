@@ -370,7 +370,7 @@ type RetryConfig struct {
 ### Milestone 3: Resilience & Observability
 **Deliverable**: Production-ready controller with full observability
 
-- [ ] Implement work queue with rate limiting for event processing
+- [x] Implement debounce buffer for batching CRD events (configurable window, reduces MCP calls)
 - [ ] Add Prometheus metrics (scans triggered, success/failure rates, queue depth)
 - [ ] Implement health endpoints (liveness, readiness) with proper checks
 - [ ] Add dead letter queue logging for permanent failures
@@ -541,3 +541,18 @@ type RetryConfig struct {
 - Updated all test files to use `ptr.To(0)` syntax
 - Test performance improved from ~67s to ~37.5s (~45% faster)
 - Milestone 1 complete (metrics deferred as project has no custom Prometheus metrics)
+
+### 2025-12-24: Milestone 3 - Debounce Buffer Implementation
+- Discussed whether work queue was needed; concluded MCP is fire-and-forget so traditional queue adds no value
+- Decided on debounce buffer approach: collect CRD events over configurable window, send as single batched request
+- Added `DebounceWindowSeconds` field to `CapabilityScanConfigSpec` (default: 10 seconds)
+- Created `capabilityscan_debounce.go` with simple buffer implementation:
+  - Collects CRD create/update events for scanning
+  - Collects CRD delete events for capability removal
+  - Flushes periodically, batching scans into comma-separated `resourceList`
+  - Sends deletes individually (MCP API limitation)
+- Modified controller to queue events to buffer instead of spawning goroutines per event
+- Added comprehensive unit tests in `capabilityscan_debounce_test.go`
+- Removed unused metrics from buffer (YAGNI - can add with Prometheus later)
+- All tests passing (268/268)
+- Milestone 3 first task complete

@@ -26,6 +26,16 @@ type CapabilityScanConfigSpec struct {
 	// Retry configuration for MCP API calls
 	// +optional
 	Retry RetryConfig `json:"retry,omitempty"`
+
+	// DebounceWindowSeconds is the time window to collect CRD events before sending to MCP
+	// When a CRD event is received, the controller waits for this duration to collect
+	// more events, then sends them all in a single batched request.
+	// This reduces HTTP requests when operators are installed (many CRDs at once).
+	// +kubebuilder:default=10
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=300
+	// +optional
+	DebounceWindowSeconds int `json:"debounceWindowSeconds,omitempty"`
 }
 
 // MCPCapabilityConfig holds MCP server configuration for capability scanning
@@ -157,4 +167,12 @@ func (r *CapabilityScanConfig) GetCollection() string {
 		return "capabilities"
 	}
 	return r.Spec.MCP.Collection
+}
+
+// GetDebounceWindowSeconds returns the debounce window with default
+func (r *CapabilityScanConfig) GetDebounceWindowSeconds() int {
+	if r.Spec.DebounceWindowSeconds <= 0 {
+		return 10
+	}
+	return r.Spec.DebounceWindowSeconds
 }

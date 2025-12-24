@@ -45,8 +45,10 @@ type CapabilityScanReconciler struct {
 
 // capabilityScanState holds the state for an active CapabilityScanConfig
 type capabilityScanState struct {
-	config    *dotaiv1alpha1.CapabilityScanConfig
-	mcpClient *MCPCapabilityScanClient
+	config       *dotaiv1alpha1.CapabilityScanConfig
+	mcpClient    *MCPCapabilityScanClient
+	buffer       *CapabilityScanBuffer
+	bufferCancel context.CancelFunc
 }
 
 // +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=capabilityscanconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -107,9 +109,29 @@ func (r *CapabilityScanReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		MaxBackoff:          time.Duration(config.GetMaxBackoffSeconds()) * time.Second,
 	})
 
+	// Create debounce buffer for batching CRD events
+	debounceWindow := time.Duration(config.GetDebounceWindowSeconds()) * time.Second
+	buffer := NewCapabilityScanBuffer(CapabilityScanBufferConfig{
+		Window:    debounceWindow,
+		MCPClient: mcpClient,
+		OnFlush: func(scans int, deletes int, err error) {
+			if err != nil {
+				r.updateStatusByKey(context.Background(), key, false, err.Error())
+			} else if scans > 0 || deletes > 0 {
+				r.updateLastScanTime(context.Background(), key)
+			}
+		},
+	})
+
+	// Start the debounce buffer goroutine
+	bufferCtx, bufferCancel := context.WithCancel(context.Background())
+	go buffer.Run(bufferCtx)
+
 	state := &capabilityScanState{
-		config:    config.DeepCopy(),
-		mcpClient: mcpClient,
+		config:       config.DeepCopy(),
+		mcpClient:    mcpClient,
+		buffer:       buffer,
+		bufferCancel: bufferCancel,
 	}
 
 	r.configsMu.Lock()
@@ -150,6 +172,9 @@ func (r *CapabilityScanReconciler) configChanged(old, new *dotaiv1alpha1.Capabil
 	if !stringSlicesEqual(old.Spec.ExcludeResources, new.Spec.ExcludeResources) {
 		return true
 	}
+	if old.GetDebounceWindowSeconds() != new.GetDebounceWindowSeconds() {
+		return true
+	}
 	return false
 }
 
@@ -166,10 +191,17 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-// removeConfig removes a config from active configs
+// removeConfig removes a config from active configs and stops its buffer
 func (r *CapabilityScanReconciler) removeConfig(key string) {
 	r.configsMu.Lock()
 	defer r.configsMu.Unlock()
+
+	if state, exists := r.activeConfigs[key]; exists {
+		// Cancel the buffer context to stop the goroutine
+		if state.bufferCancel != nil {
+			state.bufferCancel()
+		}
+	}
 	delete(r.activeConfigs, key)
 }
 
@@ -225,7 +257,7 @@ func (r *CapabilityScanReconciler) markInitialScanComplete(ctx context.Context, 
 	}
 }
 
-// HandleCRDEvent processes CRD create/delete events
+// HandleCRDEvent processes CRD create/delete events by queuing them to the debounce buffer
 func (r *CapabilityScanReconciler) HandleCRDEvent(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition, isDelete bool) {
 	logger := logf.FromContext(ctx).WithName("capabilityscan")
 
@@ -258,24 +290,18 @@ func (r *CapabilityScanReconciler) HandleCRDEvent(ctx context.Context, crd *apie
 			continue
 		}
 
-		if isDelete {
-			// Delete capability for this resource
-			go func(s *capabilityScanState, k string) {
-				if err := s.mcpClient.DeleteCapability(ctx, resourceID); err != nil {
-					logger.Error(err, "❌ Failed to delete capability for CRD", "crd", crd.Name)
-					r.updateStatusByKey(ctx, k, false, err.Error())
-				}
-			}(state, key)
-		} else {
-			// Trigger scan for this resource
-			go func(s *capabilityScanState, k string) {
-				if err := s.mcpClient.TriggerScan(ctx, resourceID); err != nil {
-					logger.Error(err, "❌ Failed to trigger scan for CRD", "crd", crd.Name)
-					r.updateStatusByKey(ctx, k, false, err.Error())
-				} else {
-					r.updateLastScanTime(ctx, k)
-				}
-			}(state, key)
+		// Queue the change to the debounce buffer
+		change := &CRDChange{
+			ResourceID: resourceID,
+			IsDelete:   isDelete,
+		}
+
+		select {
+		case state.buffer.ChangeQueue() <- change:
+			logger.V(1).Info("Queued CRD change", "crd", crd.Name, "isDelete", isDelete, "config", key)
+		default:
+			// Buffer is full, log warning but don't block
+			logger.Info("⚠️ Debounce buffer full, dropping CRD event", "crd", crd.Name, "config", key)
 		}
 	}
 }

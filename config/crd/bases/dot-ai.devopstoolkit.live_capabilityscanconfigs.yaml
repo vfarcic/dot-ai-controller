@@ -57,6 +57,16 @@ spec:
           spec:
             description: spec defines the desired state of CapabilityScanConfig
             properties:
+              debounceWindowSeconds:
+                default: 10
+                description: |-
+                  DebounceWindowSeconds is the time window to collect CRD events before sending to MCP
+                  When a CRD event is received, the controller waits for this duration to collect
+                  more events, then sends them all in a single batched request.
+                  This reduces HTTP requests when operators are installed (many CRDs at once).
+                maximum: 300
+                minimum: 1
+                type: integer
               excludeResources:
                 description: |-
                   ExcludeResources specifies patterns for resources to exclude from scanning
