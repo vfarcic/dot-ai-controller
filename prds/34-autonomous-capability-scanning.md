@@ -382,20 +382,20 @@ type RetryConfig struct {
 - Health checks correctly report controller state
 - Failed events are logged with sufficient detail for debugging
 
-### Milestone 4: Helm Chart Integration
-**Deliverable**: Controller deployable via main dot-ai Helm chart
+### Milestone 4: Helm Chart & Release
+**Deliverable**: Controller deployable via its own Helm chart (following existing pattern)
 
-- [ ] Create controller Helm chart templates (Deployment, RBAC, ServiceAccount)
-- [ ] Add optional controller component to main `dot-ai` Helm chart
-- [ ] Implement chart values for controller configuration (endpoint, filters, retry)
-- [ ] Add default `CapabilityScanConfig` resource to chart
-- [ ] Document Helm installation options in main repository docs
+- [ ] Add capability scanning controller to existing dot-ai-controller Helm chart
+- [ ] Implement chart values for capability scanning configuration (endpoint, filters, retry)
+- [ ] Add default `CapabilityScanConfig` CRD and resource to chart
+- [ ] Configure RBAC permissions for watching API resources
+- [ ] Test installation alongside existing controller features
 
 **Success Criteria**:
-- Users can enable controller via `--set controller.enabled=true`
-- Controller configuration is manageable through Helm values
-- RBAC permissions are correctly scoped (read API resources, no write permissions)
-- Chart upgrades don't disrupt controller operation
+- Controller installed separately: `helm install dot-ai-controller oci://ghcr.io/vfarcic/dot-ai-controller/charts/dot-ai-controller`
+- Capability scanning configuration manageable through Helm values
+- RBAC permissions correctly scoped (read API resources, no write permissions)
+- Works alongside existing Solution CR controller functionality
 
 ### Milestone 5: Documentation & Testing
 **Deliverable**: Complete documentation and end-to-end testing
