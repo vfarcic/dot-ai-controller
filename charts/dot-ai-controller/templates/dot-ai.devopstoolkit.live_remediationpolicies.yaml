@@ -135,7 +135,7 @@ spec:
               mcpAuthSecretRef:
                 description: |-
                   McpAuthSecretRef references a Kubernetes Secret containing the MCP authentication token
-                  When configured, the controller will include "Authorization: Bearer <token>" header in MCP requests
+                  The controller will include "Authorization: Bearer <token>" header in MCP requests
                   The Secret must exist in the same namespace as the RemediationPolicy
                 properties:
                   key:
@@ -272,6 +272,7 @@ spec:
                 type: object
             required:
             - eventSelectors
+            - mcpAuthSecretRef
             - mcpEndpoint
             type: object
           status:

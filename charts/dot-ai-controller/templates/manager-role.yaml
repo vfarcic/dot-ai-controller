@@ -69,24 +69,7 @@ rules:
 - apiGroups:
   - dot-ai.devopstoolkit.live
   resources:
-  - remediationpolicies
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - dot-ai.devopstoolkit.live
-  resources:
-  - remediationpolicies/status
-  - resourcesyncconfigs/status
-  - solutions/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - dot-ai.devopstoolkit.live
-  resources:
+  - capabilityscanconfigs
   - resourcesyncconfigs
   - solutions
   verbs:
@@ -100,7 +83,27 @@ rules:
 - apiGroups:
   - dot-ai.devopstoolkit.live
   resources:
+  - capabilityscanconfigs/finalizers
   - resourcesyncconfigs/finalizers
   - solutions/finalizers
   verbs:
   - update
+- apiGroups:
+  - dot-ai.devopstoolkit.live
+  resources:
+  - capabilityscanconfigs/status
+  - remediationpolicies/status
+  - resourcesyncconfigs/status
+  - solutions/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - dot-ai.devopstoolkit.live
+  resources:
+  - remediationpolicies
+  verbs:
+  - get
+  - list
+  - watch
