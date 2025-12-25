@@ -161,7 +161,7 @@ After startup, the controller watches for CRD events:
 
 When operators are installed, many CRDs may be created in rapid succession. Debouncing prevents overwhelming MCP with individual requests:
 
-```
+```text
 Time 0s:   CRD-A created → add to buffer
 Time 1s:   CRD-B created → add to buffer
 Time 2s:   CRD-C created → add to buffer

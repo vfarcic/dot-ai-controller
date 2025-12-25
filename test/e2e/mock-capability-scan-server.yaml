@@ -87,9 +87,12 @@ spec:
           capabilities:
             drop:
             - ALL
-          readOnlyRootFilesystem: false
+          readOnlyRootFilesystem: true
           runAsNonRoot: true
           runAsUser: 65534
+        env:
+        - name: PYTHONDONTWRITEBYTECODE
+          value: "1"
         command: ["python3"]
         args:
         - -c

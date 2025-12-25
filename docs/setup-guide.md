@@ -66,7 +66,7 @@ kubectl get crds | grep dot-ai.devopstoolkit.live
 ```
 
 You should see all four CRDs:
-```
+```text
 capabilityscanconfigs.dot-ai.devopstoolkit.live
 remediationpolicies.dot-ai.devopstoolkit.live
 resourcesyncconfigs.dot-ai.devopstoolkit.live
