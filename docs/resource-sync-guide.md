@@ -19,9 +19,9 @@ The ResourceSyncConfig enables:
 1. Create a secret with your MCP API key:
 
 ```bash
-kubectl create secret generic mcp-credentials \
+kubectl create secret generic dot-ai-secrets \
   --namespace dot-ai \
-  --from-literal=api-key=your-api-key-here
+  --from-literal=auth-token=your-auth-token-here
 ```
 
 2. Create a ResourceSyncConfig to start syncing resources:
@@ -35,8 +35,8 @@ metadata:
 spec:
   mcpEndpoint: http://dot-ai.dot-ai.svc.cluster.local:3456/api/v1/resources/sync
   mcpAuthSecretRef:
-    name: mcp-credentials
-    key: api-key
+    name: dot-ai-secrets
+    key: auth-token
   debounceWindowSeconds: 10
   resyncIntervalMinutes: 60
 ```
@@ -146,8 +146,8 @@ spec:
 
   # Required: authentication for MCP
   mcpAuthSecretRef:
-    name: mcp-credentials
-    key: api-key
+    name: dot-ai-secrets
+    key: auth-token
 
   # Batch changes for 10 seconds before syncing
   debounceWindowSeconds: 10

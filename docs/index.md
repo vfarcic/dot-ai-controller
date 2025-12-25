@@ -165,8 +165,8 @@ spec:
   mcp:
     endpoint: http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/tools/manageOrgData
     authSecretRef:
-      name: mcp-credentials
-      key: api-key
+      name: dot-ai-secrets
+      key: auth-token
 EOF
 ```
 

@@ -201,7 +201,7 @@ kubectl get capabilityscanconfigs --output jsonpath='{.items[*].status}'
 kubectl logs --selector app.kubernetes.io/name=dot-ai-controller --namespace dot-ai | grep -i "capabilityscan"
 
 # Verify auth secret exists
-kubectl get secret mcp-credentials --namespace dot-ai
+kubectl get secret dot-ai-secrets --namespace dot-ai
 ```
 
 **Common Causes:**

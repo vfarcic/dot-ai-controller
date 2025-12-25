@@ -22,9 +22,9 @@ This feature works with the [DevOps AI Toolkit MCP](https://devopstoolkit.ai/doc
 1. Create a secret with your MCP API key (if authentication is required):
 
 ```bash
-kubectl create secret generic mcp-credentials \
+kubectl create secret generic dot-ai-secrets \
   --namespace dot-ai \
-  --from-literal=api-key=your-api-key-here
+  --from-literal=auth-token=your-auth-token-here
 ```
 
 2. Create a CapabilityScanConfig to start scanning:
@@ -39,8 +39,8 @@ spec:
   mcp:
     endpoint: http://dot-ai.dot-ai.svc.cluster.local:3456/api/v1/tools/manageOrgData
     authSecretRef:
-      name: mcp-credentials
-      key: api-key
+      name: dot-ai-secrets
+      key: auth-token
 ```
 
 3. Apply it:
@@ -194,8 +194,8 @@ spec:
     endpoint: http://dot-ai.dot-ai.svc.cluster.local:3456/api/v1/tools/manageOrgData
     collection: capabilities
     authSecretRef:
-      name: mcp-credentials
-      key: api-key
+      name: dot-ai-secrets
+      key: auth-token
 
   # Only scan Crossplane and ArgoCD resources
   includeResources:
