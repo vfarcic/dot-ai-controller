@@ -5,6 +5,7 @@ resources:
 - bases/dot-ai.devopstoolkit.live_remediationpolicies.yaml
 - bases/dot-ai.devopstoolkit.live_resourcesyncconfigs.yaml
 - bases/dot-ai.devopstoolkit.live_solutions.yaml
+- bases/dot-ai.devopstoolkit.live_capabilityscanconfigs.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

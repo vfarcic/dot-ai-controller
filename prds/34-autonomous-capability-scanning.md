@@ -400,7 +400,7 @@ type RetryConfig struct {
 
 - [x] Create user guide for CapabilityScan feature (docs/capability-scan-guide.md)
 - [~] Add architecture diagrams showing controller/MCP interaction - deferred: architecture in PRD sufficient for now
-- [ ] Write end-to-end tests for CapabilityScanConfig (CRUD, status updates, CRD event detection)
+- [x] Write end-to-end tests for CapabilityScanConfig (CRUD, status updates, CRD event detection)
 - [~] Create troubleshooting guide with common issues and solutions - deferred: requires real-world usage to identify issues
 - [~] Add performance testing documentation (resource usage, scaling limits) - deferred: requires real-world usage data
 
@@ -633,3 +633,16 @@ type RetryConfig struct {
 - **Fixed** resource filtering to use Discovery API (applies to ALL resources, not just CRDs)
 - **Fixed** `cmd/main.go` to pass `RestConfig` to CapabilityScanReconciler
 - All tests passing
+
+### 2025-12-25: E2E Test Implementation & Performance Optimization
+- **E2E Tests Complete**: Created comprehensive e2e tests for CapabilityScanConfig
+  - CRUD operations (create, update, delete)
+  - Status updates (active watcher, conditions)
+  - CRD event detection with debouncing
+  - Mock server for MCP API simulation
+- **Test Performance Optimizations**:
+  - Reduced RemediationPolicy event filtering sleep from 30s to 5s
+  - Reduced CapabilityScanConfig debounce window from 5s to 2s in tests
+  - Changed ResourceSyncConfig mock server setup from BeforeEach to BeforeAll
+  - Overall test execution time reduced from 310s to 252s (~19% improvement)
+- All 30 e2e tests passing
