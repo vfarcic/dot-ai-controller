@@ -105,32 +105,6 @@ This installs all four CRDs (Solution, RemediationPolicy, ResourceSyncConfig, an
 
 ### 2. Choose Your Feature
 
-**For Resource Tracking:**
-```bash
-# Create a Solution CR to track your deployed resources
-kubectl apply --filename - <<'EOF'
-apiVersion: dot-ai.devopstoolkit.live/v1alpha1
-kind: Solution
-metadata:
-  name: my-app
-  namespace: default
-spec:
-  intent: "Production web application with database"
-  resources:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: web-app
-    - apiVersion: v1
-      kind: Service
-      name: web-app-service
-    - apiVersion: apps/v1
-      kind: StatefulSet
-      name: postgresql
-EOF
-```
-
-See the [Solution Guide](solution-guide.md) for complete examples and usage patterns.
-
 **For Event Remediation:**
 
 First, install the [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp), then:
@@ -198,13 +172,39 @@ EOF
 
 See the [Capability Scan Guide](capability-scan-guide.md) for complete examples and configuration options.
 
+**For Resource Tracking:**
+```bash
+# Create a Solution CR to track your deployed resources
+kubectl apply --filename - <<'EOF'
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: Solution
+metadata:
+  name: my-app
+  namespace: default
+spec:
+  intent: "Production web application with database"
+  resources:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: web-app
+    - apiVersion: v1
+      kind: Service
+      name: web-app-service
+    - apiVersion: apps/v1
+      kind: StatefulSet
+      name: postgresql
+EOF
+```
+
+See the [Solution Guide](solution-guide.md) for complete examples and usage patterns.
+
 ## Documentation
 
 - **[Setup Guide](setup-guide.md)** - Installation and prerequisites
-- **[Solution Guide](solution-guide.md)** - Resource tracking and lifecycle management
 - **[Remediation Guide](remediation-guide.md)** - Event-driven remediation
 - **[Resource Sync Guide](resource-sync-guide.md)** - Resource visibility and semantic search
 - **[Capability Scan Guide](capability-scan-guide.md)** - Autonomous capability discovery
+- **[Solution Guide](solution-guide.md)** - Resource tracking and lifecycle management
 - **[Troubleshooting Guide](troubleshooting.md)** - Common issues and solutions
 
 ## Architecture
