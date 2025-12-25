@@ -107,7 +107,11 @@ var _ = Describe("RemediationPolicy Controller", func() {
 						},
 					},
 					McpEndpoint: "http://test-mcp:3456/api/v1/tools/remediate",
-					Mode:        "manual",
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-auth-secret",
+						Key:  "api-key",
+					},
+					Mode: "manual",
 				},
 			}
 
@@ -282,6 +286,10 @@ var _ = Describe("RemediationPolicy Controller", func() {
 							},
 						},
 						McpEndpoint: "http://test-mcp:3456/api/v1/tools/remediate",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
 					},
 				}
 
@@ -357,6 +365,10 @@ var _ = Describe("RemediationPolicy Controller", func() {
 							},
 						},
 						McpEndpoint: "http://test-mcp:3456/api/v1/tools/remediate",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
 					},
 				}
 
@@ -439,6 +451,10 @@ var _ = Describe("RemediationPolicy Controller", func() {
 							},
 						},
 						McpEndpoint: mockServer.URL + "/api/v1/tools/remediate",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
 					},
 				}
 
@@ -523,6 +539,10 @@ var _ = Describe("RemediationPolicy Controller", func() {
 							},
 						},
 						McpEndpoint: mockServer.URL + "/api/v1/tools/remediate",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
 					},
 				}
 
@@ -606,6 +626,10 @@ var _ = Describe("RemediationPolicy Controller", func() {
 							},
 						},
 						McpEndpoint: mockServer.URL + "/api/v1/tools/remediate",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
 					},
 				}
 
@@ -815,6 +839,10 @@ var _ = Describe("RemediationPolicy Controller", func() {
 							},
 						},
 						McpEndpoint: "http://test-mcp:3456/api/v1/tools/remediate",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -954,7 +982,11 @@ var _ = Describe("RemediationPolicy Controller", func() {
 						},
 					},
 					McpEndpoint: mockServer.URL + "/api/v1/tools/remediate",
-					Mode:        "manual", // Policy default mode
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-auth-secret",
+						Key:  "api-key",
+					},
+					Mode: "manual", // Policy default mode
 					RateLimiting: dotaiv1alpha1.RateLimiting{
 						EventsPerMinute: 5,
 						CooldownMinutes: 1, // Short cooldown for testing
@@ -1299,7 +1331,11 @@ var _ = Describe("RemediationPolicy Controller", func() {
 							},
 						},
 						McpEndpoint: "http://second-test-mcp:3456/api/v1/tools/remediate",
-						Mode:        "automatic",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
+						Mode: "automatic",
 					},
 				}
 
@@ -1416,7 +1452,11 @@ var _ = Describe("RemediationPolicy Controller", func() {
 							},
 						},
 						McpEndpoint: errorServer.URL + "/api/v1/tools/remediate",
-						Mode:        "manual",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
+						Mode: "manual",
 					},
 				}
 
@@ -1530,7 +1570,11 @@ var _ = Describe("RemediationPolicy Controller", func() {
 							},
 						},
 						McpEndpoint: rateLimitMockServer.URL + "/api/v1/tools/remediate",
-						Mode:        "manual",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
+						Mode: "manual",
 						RateLimiting: dotaiv1alpha1.RateLimiting{
 							EventsPerMinute: 5, // Allow more events per minute for testing
 							CooldownMinutes: 1, // Short cooldown for fast tests
@@ -1771,7 +1815,11 @@ var _ = Describe("RemediationPolicy Controller", func() {
 						},
 					},
 					McpEndpoint: successServer.URL + "/api/v1/tools/remediate",
-					Mode:        "manual",
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-auth-secret",
+						Key:  "api-key",
+					},
+					Mode: "manual",
 				},
 			}
 
@@ -1855,7 +1903,11 @@ var _ = Describe("RemediationPolicy Controller", func() {
 						},
 					},
 					McpEndpoint: failureServer.URL + "/api/v1/tools/remediate",
-					Mode:        "manual",
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-auth-secret",
+						Key:  "api-key",
+					},
+					Mode: "manual",
 				},
 			}
 

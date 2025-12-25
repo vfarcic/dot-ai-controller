@@ -112,6 +112,7 @@ spec:
                     description: Endpoint is the MCP server URL
                     type: string
                 required:
+                - authSecretRef
                 - endpoint
                 type: object
               retry:

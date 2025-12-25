@@ -51,8 +51,8 @@ type MCPCapabilityConfig struct {
 
 	// AuthSecretRef references a Kubernetes Secret containing the MCP authentication token
 	// The Secret must exist in the same namespace as the CapabilityScanConfig
-	// +optional
-	AuthSecretRef SecretReference `json:"authSecretRef,omitempty"`
+	// +required
+	AuthSecretRef SecretReference `json:"authSecretRef"`
 }
 
 // RetryConfig defines retry behavior for MCP API calls

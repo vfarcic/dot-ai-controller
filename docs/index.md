@@ -35,7 +35,7 @@ The DevOps AI Toolkit Controller bridges the gap between Kubernetes resources an
 
 ## Features
 
-The DevOps AI Toolkit Controller provides three main capabilities:
+The DevOps AI Toolkit Controller provides four main capabilities:
 
 ### 1. Solution CRD - Resource Tracking
 
@@ -51,7 +51,7 @@ Track and manage deployed Kubernetes resources as logical solutions:
 
 ### 2. RemediationPolicy CRD - Event-Driven Remediation
 
-Monitor Kubernetes events and automatically remediate issues using the [DevOps AI Toolkit](https://github.com/vfarcic/dot-ai):
+Monitor Kubernetes events and automatically remediate issues using the [DevOps AI Toolkit](https://devopstoolkit.ai/docs/mcp):
 
 - **Event Watching**: Configurable filtering of Kubernetes events by type, reason, and involved objects
 - **Automatic Mode**: System detects, analyzes, and fixes issues without human intervention
@@ -60,7 +60,7 @@ Monitor Kubernetes events and automatically remediate issues using the [DevOps A
 - **Rate Limiting**: Prevents event storms with configurable cooldowns
 - **Status Reporting**: Comprehensive observability through status updates
 
-**Requires** [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai) for AI-powered analysis.
+**Requires** [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp) for AI-powered analysis.
 
 ### 3. ResourceSyncConfig CRD - Resource Visibility
 
@@ -72,11 +72,21 @@ Enable semantic search and resource discovery across your cluster:
 - **Debounced Sync**: Batches changes to reduce API calls
 - **Periodic Resync**: Full state sync catches any missed events
 
-**Requires** [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai) for semantic search capabilities.
+**Requires** [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp) for semantic search capabilities.
+
+### 4. CapabilityScanConfig CRD - Autonomous Capability Discovery
+
+Keep your cluster's capability data up-to-date for AI-powered recommendations:
+
+- **Autonomous Discovery**: Automatically detects CRD changes (create, update, delete)
+- **Event-Driven Scanning**: Triggers capability scans when new CRDs are installed
+- **Startup Reconciliation**: Syncs cluster state with MCP on controller restart
+- **Resource Filtering**: Include/exclude patterns for targeted scanning
+- **Debounced Batching**: Groups rapid CRD changes into efficient batch requests
+
+**Requires** [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp) for capability storage and analysis.
 
 ## Quick Start
-
-> **Note**: If you're using [DevOps AI Toolkit (dot-ai)](https://github.com/vfarcic/dot-ai), the controller is automatically installed into your cluster. Skip to step 2.
 
 ### 1. Install Controller
 
@@ -91,7 +101,7 @@ helm install dot-ai-controller oci://ghcr.io/vfarcic/dot-ai-controller/charts/do
   --wait
 ```
 
-This installs all three CRDs (Solution, RemediationPolicy, and ResourceSyncConfig) and the controller.
+This installs all four CRDs (Solution, RemediationPolicy, ResourceSyncConfig, and CapabilityScanConfig) and the controller.
 
 ### 2. Choose Your Feature
 
@@ -123,7 +133,7 @@ See the [Solution Guide](solution-guide.md) for complete examples and usage patt
 
 **For Event Remediation:**
 
-First, install the [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai), then:
+First, install the [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp), then:
 
 ```bash
 # Create a RemediationPolicy to handle events
@@ -147,7 +157,7 @@ See the [Remediation Guide](remediation-guide.md) for complete examples, configu
 
 **For Resource Visibility:**
 
-First, install the [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai), then:
+First, install the [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp), then:
 
 ```bash
 # Create a ResourceSyncConfig to enable semantic search
@@ -165,12 +175,36 @@ EOF
 
 See the [Resource Sync Guide](resource-sync-guide.md) for complete examples and semantic search usage.
 
+**For Capability Discovery:**
+
+First, install the [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp), then:
+
+```bash
+# Create a CapabilityScanConfig to enable autonomous scanning
+kubectl apply --filename - <<'EOF'
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: CapabilityScanConfig
+metadata:
+  name: default-scan
+  namespace: dot-ai
+spec:
+  mcp:
+    endpoint: http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/tools/manageOrgData
+    authSecretRef:
+      name: mcp-credentials
+      key: api-key
+EOF
+```
+
+See the [Capability Scan Guide](capability-scan-guide.md) for complete examples and configuration options.
+
 ## Documentation
 
 - **[Setup Guide](setup-guide.md)** - Installation and prerequisites
 - **[Solution Guide](solution-guide.md)** - Resource tracking and lifecycle management
 - **[Remediation Guide](remediation-guide.md)** - Event-driven remediation
 - **[Resource Sync Guide](resource-sync-guide.md)** - Resource visibility and semantic search
+- **[Capability Scan Guide](capability-scan-guide.md)** - Autonomous capability discovery
 - **[Troubleshooting Guide](troubleshooting.md)** - Common issues and solutions
 
 ## Architecture
@@ -195,15 +229,16 @@ See the [Resource Sync Guide](resource-sync-guide.md) for complete examples and 
 │  Deployment      Service         PVC      ConfigMap│
 │  (child)         (child)       (child)   (child)  │
 │                                                     │
-│  ┌──────────────────────────────────────┐          │
-│  │  Controller                          │          │
-│  │  ───────────                         │          │
-│  │  • Watches Solution CRs              │          │
-│  │  • Manages ownerReferences           │          │
-│  │  • Tracks resource health            │          │
-│  │  • Processes events (RemediationPolicy) │       │
-│  │  • Syncs resources to MCP (ResourceSync) │      │
-│  └──────────────────────────────────────┘          │
+│  ┌─────────────────────────────────────────────┐   │
+│  │  Controller                                 │   │
+│  │  ───────────                                │   │
+│  │  • Watches Solution CRs                     │   │
+│  │  • Manages ownerReferences                  │   │
+│  │  • Tracks resource health                   │   │
+│  │  • Processes events (RemediationPolicy)     │   │
+│  │  • Syncs resources to MCP (ResourceSync)    │   │
+│  │  • Scans capabilities (CapabilityScan)      │   │
+│  └─────────────────────────────────────────────┘   │
 │                                                     │
 └─────────────────────────────────────────────────────┘
 ```

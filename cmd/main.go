@@ -242,9 +242,10 @@ func main() {
 	}
 
 	if err := (&controller.CapabilityScanReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("dot-ai-controller"),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Recorder:   mgr.GetEventRecorderFor("dot-ai-controller"),
+		RestConfig: mgr.GetConfig(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "CapabilityScanConfig")
 		os.Exit(1)

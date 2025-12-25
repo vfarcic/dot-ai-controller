@@ -2,8 +2,6 @@
 
 This guide covers installation and initial setup of the DevOps AI Toolkit Controller.
 
-> **Note**: If you're using [DevOps AI Toolkit (dot-ai)](https://github.com/vfarcic/dot-ai), the controller is automatically installed into your cluster. You can skip the installation section and proceed directly to [What's Next](#whats-next).
-
 ## Prerequisites
 
 - **kubectl** v1.11.3+
@@ -27,10 +25,11 @@ kubectl cluster-info
 
 ## Install Controller
 
-The controller provides three features:
+The controller provides four features:
 - **Solution CRD**: Resource tracking and lifecycle management (standalone)
-- **RemediationPolicy CRD**: Event-driven remediation (requires [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai))
-- **ResourceSyncConfig CRD**: Resource visibility and semantic search (requires [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai))
+- **RemediationPolicy CRD**: Event-driven remediation (requires [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp))
+- **ResourceSyncConfig CRD**: Resource visibility and semantic search (requires [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp))
+- **CapabilityScanConfig CRD**: Autonomous capability discovery (requires [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp))
 
 ### Install via Helm
 
@@ -50,6 +49,7 @@ This installs:
 - Solution CRD
 - RemediationPolicy CRD
 - ResourceSyncConfig CRD
+- CapabilityScanConfig CRD
 - RBAC permissions
 
 ### Verify Installation
@@ -65,8 +65,9 @@ kubectl logs --selector app.kubernetes.io/name=dot-ai-controller --namespace dot
 kubectl get crds | grep dot-ai.devopstoolkit.live
 ```
 
-You should see all three CRDs:
+You should see all four CRDs:
 ```
+capabilityscanconfigs.dot-ai.devopstoolkit.live
 remediationpolicies.dot-ai.devopstoolkit.live
 resourcesyncconfigs.dot-ai.devopstoolkit.live
 solutions.dot-ai.devopstoolkit.live
@@ -74,13 +75,14 @@ solutions.dot-ai.devopstoolkit.live
 
 ## Optional: Install DevOps AI Toolkit MCP
 
-**Required for RemediationPolicy and ResourceSyncConfig features.** If you're only using the Solution CRD, skip this step.
+**Required for RemediationPolicy, ResourceSyncConfig, and CapabilityScanConfig features.** If you're only using the Solution CRD, skip this step.
 
-For MCP installation instructions, see the [DevOps AI Toolkit documentation](https://github.com/vfarcic/dot-ai).
+For MCP installation instructions, see the [DevOps AI Toolkit documentation](https://devopstoolkit.ai/docs/mcp).
 
 The controller expects the MCP service at:
 - RemediationPolicy: `http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/tools/remediate`
 - ResourceSyncConfig: `http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/resources/sync`
+- CapabilityScanConfig: `http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/tools/manageOrgData`
 
 ## What's Next
 
@@ -89,6 +91,7 @@ Choose which features you want to use:
 - **Solution CRD**: [Solution Guide](solution-guide.md) - Resource tracking and lifecycle management (works standalone, no MCP needed)
 - **RemediationPolicy CRD**: [Remediation Guide](remediation-guide.md) - Event-driven remediation (requires MCP)
 - **ResourceSyncConfig CRD**: [Resource Sync Guide](resource-sync-guide.md) - Resource visibility and semantic search (requires MCP)
+- **CapabilityScanConfig CRD**: [Capability Scan Guide](capability-scan-guide.md) - Autonomous capability discovery (requires MCP)
 
 ## Cleanup
 

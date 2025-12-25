@@ -8,6 +8,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -67,6 +69,20 @@ var _ = BeforeSuite(func() {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
+
+	// Create test auth secret for MCP authentication tests
+	By("creating test MCP auth secret in default namespace")
+	testSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mcp-auth-secret",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"api-key": []byte("test-api-key"),
+		},
+	}
+	err = k8sClient.Create(ctx, testSecret)
+	Expect(err).NotTo(HaveOccurred())
 })
 
 var _ = AfterSuite(func() {

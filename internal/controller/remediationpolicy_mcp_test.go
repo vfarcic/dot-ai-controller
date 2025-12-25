@@ -45,6 +45,10 @@ var _ = Describe("RemediationPolicy MCP", func() {
 				},
 				Spec: dotaiv1alpha1.RemediationPolicySpec{
 					McpEndpoint: "http://test-mcp:3456/api/v1/tools/remediate",
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-auth-secret",
+						Key:  "api-key",
+					},
 				},
 			}
 

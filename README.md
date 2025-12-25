@@ -8,11 +8,12 @@ A Kubernetes controller that provides resource tracking, event-driven remediatio
 
 ## Overview
 
-The DevOps AI Toolkit Controller bridges the gap between Kubernetes resources and intelligent operations through three CRDs:
+The DevOps AI Toolkit Controller bridges the gap between Kubernetes resources and intelligent operations through four CRDs:
 
 - **Solution** - Track and manage deployed resources as logical solutions with automatic cleanup via ownerReferences
 - **RemediationPolicy** - Monitor Kubernetes events and automatically remediate issues using AI-powered analysis
 - **ResourceSyncConfig** - Enable semantic search and resource discovery across your cluster
+- **CapabilityScanConfig** - Autonomous capability discovery and scanning for AI-powered recommendations
 
 <p align="center">
   <a href="https://devopstoolkit.ai/docs/controller/"><strong>Read the Documentation</strong></a>
@@ -35,4 +36,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-Built with [Kubebuilder](https://kubebuilder.io/) and designed to integrate with the [DevOps AI Toolkit](https://github.com/vfarcic/dot-ai).
+Built with [Kubebuilder](https://kubebuilder.io/) and designed to integrate with the [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp).

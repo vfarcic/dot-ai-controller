@@ -12,7 +12,7 @@ The ResourceSyncConfig enables:
 ## Prerequisites
 
 - Controller installed (see [Setup Guide](setup-guide.md))
-- [DevOps AI Toolkit MCP](https://github.com/vfarcic/dot-ai) installed and running
+- [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp) installed and running
 
 ## Quick Start
 
@@ -57,24 +57,6 @@ kubectl apply -f resourcesyncconfig.yaml
 | `mcpAuthSecretRef` | SecretReference | Yes | - | Secret containing API key for MCP authentication |
 | `debounceWindowSeconds` | int | No | 10 | Time window to batch changes before syncing |
 | `resyncIntervalMinutes` | int | No | 60 | Full resync interval (catches missed events) |
-
-### Authentication
-
-The `mcpAuthSecretRef` field is required and must reference a Kubernetes Secret in the same namespace as the ResourceSyncConfig:
-
-```yaml
-mcpAuthSecretRef:
-  name: mcp-credentials  # Secret name
-  key: api-key           # Key within the secret containing the token
-```
-
-Create the secret in the same namespace:
-
-```bash
-kubectl create secret generic mcp-credentials \
-  --namespace dot-ai \
-  --from-literal=api-key=your-api-key-here
-```
 
 ## Status
 
@@ -220,3 +202,9 @@ kubectl delete resourcesyncconfig default-sync
 ```
 
 This stops the watchers but does not delete synced data from MCP/Qdrant.
+
+## Next Steps
+
+- Learn about [Capability Scanning](capability-scan-guide.md) for autonomous capability discovery
+- Explore [Remediation Policies](remediation-guide.md) for event-driven remediation
+- Check [Troubleshooting Guide](troubleshooting.md) for common issues

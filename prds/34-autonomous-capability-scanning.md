@@ -333,7 +333,7 @@ type RetryConfig struct {
 - **Non-Retryable**: 400 Bad Request, 404 Not Found, invalid resource format
 - **Permanent Failure**: After max retry attempts, log error and expose metric
 
-**Dead Letter Queue**: Failed events after max retries are logged with structured data for manual investigation/replay.
+**Recovery via Startup Reconciliation**: Failed events are automatically recovered on pod restart via diff-and-sync reconciliation (compares cluster CRDs with MCP capabilities and syncs differences).
 
 ## Milestones
 
@@ -373,8 +373,8 @@ type RetryConfig struct {
 - [x] Implement debounce buffer for batching CRD events (configurable window, reduces MCP calls)
 - [~] Add Prometheus metrics (scans triggered, success/failure rates, queue depth) - deferred: project has no custom Prometheus metrics pattern yet
 - [~] Implement health endpoints (liveness, readiness) with proper checks - not applicable: manager already provides health endpoints; adding MCP-specific checks would affect unrelated controllers
-- [ ] Add dead letter queue logging for permanent failures
-- [ ] Create runbook documentation for common failure scenarios
+- [~] Add dead letter queue logging for permanent failures - not needed: startup reconciliation recovers failed operations on restart
+- [~] Create runbook documentation for common failure scenarios - deferred: will be covered by user-facing troubleshooting in capability-scan-guide.md
 
 **Success Criteria**:
 - Controller handles MCP server downtime gracefully (queues events, retries)
@@ -383,32 +383,32 @@ type RetryConfig struct {
 ### Milestone 4: Helm Chart & Release
 **Deliverable**: Controller deployable via its own Helm chart (following existing pattern)
 
-- [ ] Add capability scanning controller to existing dot-ai-controller Helm chart
-- [ ] Implement chart values for capability scanning configuration (endpoint, filters, retry)
-- [ ] Add default `CapabilityScanConfig` CRD and resource to chart
-- [ ] Configure RBAC permissions for watching API resources
-- [ ] Test installation alongside existing controller features
+- [x] Add capability scanning controller to existing dot-ai-controller Helm chart - automated: CI copies CRDs from `config/crd/bases/` to Helm chart on merge
+- [~] Implement chart values for capability scanning configuration (endpoint, filters, retry) - not needed: configuration done via CapabilityScanConfig CR, not Helm values
+- [x] Add default `CapabilityScanConfig` CRD and resource to chart - automated: CI copies CRD on merge
+- [x] Configure RBAC permissions for watching API resources - automated: kubebuilder markers generate RBAC, CI syncs to Helm chart
+- [~] Test installation alongside existing controller features - deferred: will be validated post-release in real cluster alongside new MCP version
 
 **Success Criteria**:
 - Controller installed separately: `helm install dot-ai-controller oci://ghcr.io/vfarcic/dot-ai-controller/charts/dot-ai-controller`
-- Capability scanning configuration manageable through Helm values
+- ~~Capability scanning configuration manageable through Helm values~~ Configuration via CapabilityScanConfig CR
 - RBAC permissions correctly scoped (read API resources, no write permissions)
 - Works alongside existing Solution CR controller functionality
 
 ### Milestone 5: Documentation & Testing
 **Deliverable**: Complete documentation and end-to-end testing
 
-- [ ] Create comprehensive README in controller repository
-- [ ] Add architecture diagrams showing controller/MCP interaction
-- [ ] Write end-to-end tests (install operator -> verify scan -> uninstall -> verify delete)
-- [ ] Create troubleshooting guide with common issues and solutions
-- [ ] Add performance testing documentation (resource usage, scaling limits)
+- [x] Create user guide for CapabilityScan feature (docs/capability-scan-guide.md)
+- [~] Add architecture diagrams showing controller/MCP interaction - deferred: architecture in PRD sufficient for now
+- [ ] Write end-to-end tests for CapabilityScanConfig (CRUD, status updates, CRD event detection)
+- [~] Create troubleshooting guide with common issues and solutions - deferred: requires real-world usage to identify issues
+- [~] Add performance testing documentation (resource usage, scaling limits) - deferred: requires real-world usage data
 
 **Success Criteria**:
-- New users can deploy and configure controller following README alone
-- E2E tests validate complete workflow from CRD creation to capability availability
-- Troubleshooting guide addresses failure scenarios discovered during testing
-- Performance characteristics documented (events/sec, memory usage)
+- New users can deploy and configure controller following user guide
+- ~~E2E tests validate complete workflow from CRD creation to capability availability~~ Post-release validation
+- ~~Troubleshooting guide addresses failure scenarios discovered during testing~~ Post-release iteration
+- ~~Performance characteristics documented (events/sec, memory usage)~~ Post-release iteration
 
 ## Success Metrics
 
@@ -588,4 +588,48 @@ type RetryConfig struct {
   - Avoids expensive full scans when only delta sync is needed
   - Full scan still used for fresh installs (MCP empty)
 - **Tests**: Added comprehensive unit tests for `computeCapabilityDiff` and `ListCapabilityIDs`
+- All tests passing
+
+### 2025-12-24: Design Decision - Dead Letter Queue Not Needed
+- **Decision**: Mark dead letter queue logging task as not needed
+- **Rationale**: Startup reconciliation already provides recovery for failed operations. On pod restart, the controller compares cluster CRDs with MCP capabilities and syncs any differences. This means:
+  - If a scan failed → startup reconciliation detects missing capability and re-triggers scan
+  - If a delete failed → startup reconciliation detects orphaned capability and re-triggers delete
+- **Impact**: Milestone 3 "Add dead letter queue logging" task marked as not needed `[~]`
+- **Architecture Note**: Recovery via restart is simpler and more reliable than persistent DLQ
+
+### 2025-12-24: Design Decision - Helm Chart Automation via CI
+- **Decision**: Milestone 4 Helm chart tasks are mostly automated via existing CI pipeline
+- **Rationale**: The release workflow already:
+  1. Runs `make generate manifests` to generate CRDs and RBAC
+  2. Copies all CRDs from `config/crd/bases/*.yaml` to Helm chart templates
+  3. Copies RBAC from `config/rbac/role.yaml` to Helm chart (with templating)
+- **Impact**:
+  - "Add CRD to Helm chart" → automated via CI
+  - "Configure RBAC permissions" → automated via CI (kubebuilder markers + CI sync)
+  - "Implement Helm values for config" → not needed (config via CapabilityScanConfig CR)
+- **Remaining**: Only "Test installation alongside existing controller features" needs manual verification
+
+### 2025-12-24: Design Decision - Post-Release Validation Strategy
+- **Decision**: Defer installation testing and most Milestone 5 items to post-release validation
+- **Rationale**:
+  - Controller and MCP server need to be released together for meaningful testing
+  - Real-world cluster testing provides better validation than Kind-based pre-release testing
+  - Troubleshooting guide and performance docs require real-world usage data to be useful
+- **Impact**:
+  - Milestone 4: "Test installation alongside existing controller features" → deferred to post-release
+  - Milestone 5: E2E tests, troubleshooting guide, performance docs → deferred to post-release
+  - Milestone 5: User guide (capability-scan-guide.md) → required for release
+- **Workflow**: Release both controller and MCP → Install in real cluster → Analyze outcomes → Fix issues → Update docs
+
+### 2025-12-25: Documentation Complete
+- **Created** `docs/capability-scan-guide.md` - comprehensive user guide for CapabilityScan feature
+- **Updated** `docs/index.md` - added CapabilityScanConfig section, updated architecture diagram
+- **Updated** `docs/setup-guide.md` - added CapabilityScanConfig to features and CRDs lists
+- **Updated** `docs/troubleshooting.md` - added section #8 for CapabilityScanConfig issues
+- **Updated** `docs/remediation-guide.md`, `docs/solution-guide.md`, `docs/resource-sync-guide.md` - added cross-reference links to capability-scan-guide
+- **Updated** `README.md` - added CapabilityScanConfig to CRD list, fixed MCP documentation link
+- **Made** `authSecretRef` required in both CapabilityScanConfig and RemediationPolicy CRDs
+- **Fixed** resource filtering to use Discovery API (applies to ALL resources, not just CRDs)
+- **Fixed** `cmd/main.go` to pass `RestConfig` to CapabilityScanReconciler
 - All tests passing

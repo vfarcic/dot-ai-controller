@@ -21,6 +21,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -37,6 +39,12 @@ type CapabilityScanReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+
+	// RestConfig for creating discovery client
+	RestConfig *rest.Config
+
+	// discoveryClient for finding all resource types
+	discoveryClient discovery.DiscoveryInterface
 
 	// activeConfigs tracks which CapabilityScanConfig CRs have active state
 	// Key is namespace/name of the CR
@@ -83,6 +91,16 @@ func (r *CapabilityScanReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	key := req.Namespace + "/" + req.Name
 
 	// Check if we already have this config active
+	// Initialize discovery client if not already set
+	if r.discoveryClient == nil && r.RestConfig != nil {
+		var err error
+		r.discoveryClient, err = discovery.NewDiscoveryClientForConfig(r.RestConfig)
+		if err != nil {
+			logger.Error(err, "Failed to create discovery client")
+			return ctrl.Result{}, err
+		}
+	}
+
 	r.configsMu.RLock()
 	existingState, exists := r.activeConfigs[key]
 	r.configsMu.RUnlock()
@@ -205,23 +223,23 @@ func (r *CapabilityScanReconciler) removeConfig(key string) {
 	delete(r.activeConfigs, key)
 }
 
-// performStartupReconciliation reconciles cluster CRDs with MCP capabilities on startup
+// performStartupReconciliation reconciles cluster resources with MCP capabilities on startup
 // It computes the diff between cluster state and MCP state, then:
-// - If MCP is empty: triggers a full scan
-// - Otherwise: scans missing CRDs and deletes orphaned capabilities
+// - Scans missing resources and deletes orphaned capabilities
+// Uses Discovery API to find ALL resources (core + CRDs) with filters applied
 func (r *CapabilityScanReconciler) performStartupReconciliation(ctx context.Context, state *capabilityScanState, configKey string) {
 	logger := logf.Log.WithName("capabilityscan")
 
 	logger.Info("Starting reconciliation", "config", configKey)
 
-	// List all CRDs in cluster (with filters applied)
-	clusterCRDs, err := r.listClusterCRDIDs(ctx, state.config)
+	// List all resources in cluster using Discovery API (with filters applied)
+	clusterResources, err := r.listAllResourceIDs(ctx, state.config)
 	if err != nil {
-		logger.Error(err, "❌ Failed to list cluster CRDs")
+		logger.Error(err, "❌ Failed to list cluster resources")
 		r.updateStatusByKey(ctx, configKey, false, err.Error())
 		return
 	}
-	logger.Info("Found cluster CRDs", "count", len(clusterCRDs))
+	logger.Info("Found cluster resources", "count", len(clusterResources))
 
 	// List all capability IDs from MCP
 	mcpCapabilities, err := state.mcpClient.ListCapabilityIDs(ctx)
@@ -232,31 +250,18 @@ func (r *CapabilityScanReconciler) performStartupReconciliation(ctx context.Cont
 	}
 	logger.Info("Found MCP capabilities", "count", len(mcpCapabilities))
 
-	// If MCP is empty, trigger full scan
-	if len(mcpCapabilities) == 0 {
-		logger.Info("No capabilities in MCP, triggering full scan")
-		if err := state.mcpClient.TriggerFullScan(ctx); err != nil {
-			logger.Error(err, "❌ Failed to trigger full scan")
-			r.updateStatusByKey(ctx, configKey, false, err.Error())
-			return
-		}
-		logger.Info("✅ Full scan triggered successfully")
-		r.updateLastScanTime(ctx, configKey)
-		return
-	}
-
 	// Compute diff
-	toScan, toDelete := computeCapabilityDiff(clusterCRDs, mcpCapabilities)
+	toScan, toDelete := computeCapabilityDiff(clusterResources, mcpCapabilities)
 
 	logger.Info("Computed capability diff",
 		"toScan", len(toScan),
 		"toDelete", len(toDelete),
 	)
 
-	// Scan missing CRDs (if any)
+	// Scan missing resources (if any)
 	if len(toScan) > 0 {
 		resourceList := strings.Join(toScan, ",")
-		logger.Info("Scanning missing CRDs", "count", len(toScan), "resources", resourceList)
+		logger.Info("Scanning missing resources", "count", len(toScan), "resources", resourceList)
 		if err := state.mcpClient.TriggerScan(ctx, resourceList); err != nil {
 			logger.Error(err, "❌ Failed to trigger targeted scan")
 			r.updateStatusByKey(ctx, configKey, false, err.Error())
@@ -287,9 +292,9 @@ func (r *CapabilityScanReconciler) performStartupReconciliation(ctx context.Cont
 	r.updateLastScanTime(ctx, configKey)
 }
 
-// computeCapabilityDiff computes the difference between cluster CRDs and MCP capabilities
+// computeCapabilityDiff computes the difference between cluster resources and MCP capabilities
 // Returns: (toScan, toDelete) where:
-// - toScan: CRDs in cluster but not in MCP (need to be scanned)
+// - toScan: resources in cluster but not in MCP (need to be scanned)
 // - toDelete: capabilities in MCP but not in cluster (need to be deleted)
 func computeCapabilityDiff(clusterCRDs, mcpCapabilities []string) (toScan, toDelete []string) {
 	clusterSet := make(map[string]struct{}, len(clusterCRDs))
@@ -394,6 +399,73 @@ func (r *CapabilityScanReconciler) listClusterCRDIDs(ctx context.Context, config
 			ids = append(ids, id)
 		}
 	}
+	return ids, nil
+}
+
+// listAllResourceIDs lists ALL resource types (core + CRDs) using Discovery API
+// and returns their capability IDs with filters applied
+func (r *CapabilityScanReconciler) listAllResourceIDs(ctx context.Context, config *dotaiv1alpha1.CapabilityScanConfig) ([]string, error) {
+	logger := logf.FromContext(ctx).WithName("capabilityscan")
+
+	if r.discoveryClient == nil {
+		return nil, fmt.Errorf("discovery client not initialized")
+	}
+
+	// Get all API resources using Discovery API
+	_, resources, err := r.discoveryClient.ServerGroupsAndResources()
+	if err != nil {
+		// Discovery can return partial results with errors for unavailable API groups
+		if !discovery.IsGroupDiscoveryFailedError(err) {
+			return nil, fmt.Errorf("failed to discover API resources: %w", err)
+		}
+		logger.V(1).Info("Partial discovery failure (some API groups unavailable)", "error", err)
+	}
+
+	var ids []string
+	seen := make(map[string]bool) // Deduplicate resources across versions
+
+	for _, resourceList := range resources {
+		if resourceList == nil {
+			continue
+		}
+
+		// Parse the group/version from the API list
+		gv := resourceList.GroupVersion
+		parts := strings.Split(gv, "/")
+		var group string
+		if len(parts) == 2 {
+			group = parts[0] // e.g., "apps" from "apps/v1"
+		} else {
+			group = "" // core API (v1)
+		}
+
+		for _, resource := range resourceList.APIResources {
+			// Skip subresources (e.g., pods/log, pods/exec)
+			if strings.Contains(resource.Name, "/") {
+				continue
+			}
+
+			// Build capability ID: Kind for core, Kind.group for others
+			var id string
+			if group == "" {
+				id = resource.Kind
+			} else {
+				id = resource.Kind + "." + group
+			}
+
+			// Deduplicate (same resource may appear in multiple versions)
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+
+			// Apply include/exclude filters
+			if r.shouldProcessResource(config, id) {
+				ids = append(ids, id)
+			}
+		}
+	}
+
 	return ids, nil
 }
 

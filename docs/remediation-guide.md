@@ -5,7 +5,7 @@ This guide covers the RemediationPolicy CRD for event-driven remediation using t
 ## Prerequisites
 
 - Controller installed (see [Setup Guide](setup-guide.md))
-- **DevOps AI Toolkit MCP installed** - See [DevOps AI Toolkit documentation](https://github.com/vfarcic/dot-ai)
+- **DevOps AI Toolkit MCP installed** - See [DevOps AI Toolkit documentation](https://devopstoolkit.ai/docs/mcp)
 - Slack webhook URL (optional, for Slack notifications)
 - Google Chat webhook URL (optional, for Google Chat notifications - requires Google Workspace paid account)
 
@@ -62,7 +62,7 @@ spec:
 
   # MCP endpoint using internal service URL
   mcpEndpoint: http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/tools/remediate
-  mcpAuthSecretRef:                   # MCP authentication (required for Kubernetes deployments)
+  mcpAuthSecretRef:                   # MCP authentication (required)
     name: dot-ai-secrets              # Secret name (must be in same namespace)
     key: auth-token                   # Key within the Secret containing the auth token
   mcpTool: remediate
@@ -696,5 +696,6 @@ kubectl delete remediationpolicy sample-policy --namespace dot-ai
 ## Next Steps
 
 - Review [Solution Guide](solution-guide.md) for resource tracking and lifecycle management
+- Learn about [Capability Scanning](capability-scan-guide.md) for autonomous capability discovery
 - Check [Troubleshooting Guide](troubleshooting.md) for common issues
-- Explore [DevOps AI Toolkit](https://github.com/vfarcic/dot-ai) for MCP capabilities
+- Explore [DevOps AI Toolkit](https://devopstoolkit.ai/docs/mcp) for MCP capabilities
