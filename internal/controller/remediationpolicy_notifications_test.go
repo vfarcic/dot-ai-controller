@@ -354,6 +354,18 @@ var _ = Describe("RemediationPolicy Notifications", func() {
 				Expect(k8sClient.Create(ctx, ns)).To(Succeed())
 				defer k8sClient.Delete(ctx, ns)
 
+				// Create MCP auth secret
+				mcpAuthSecret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "mcp-auth-secret",
+						Namespace: testNamespace,
+					},
+					Data: map[string][]byte{
+						"api-key": []byte("test-api-key"),
+					},
+				}
+				Expect(k8sClient.Create(ctx, mcpAuthSecret)).To(Succeed())
+
 				// Create Secret with Slack webhook URL
 				webhookSecret := &corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
@@ -382,7 +394,11 @@ var _ = Describe("RemediationPolicy Notifications", func() {
 							},
 						},
 						McpEndpoint: mockMcpServer.URL,
-						Mode:        "manual",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
+						Mode: "manual",
 						Notifications: dotaiv1alpha1.NotificationConfig{
 							Slack: dotaiv1alpha1.SlackConfig{
 								Enabled: true,
@@ -475,7 +491,11 @@ var _ = Describe("RemediationPolicy Notifications", func() {
 							},
 						},
 						McpEndpoint: mockMcpServer.URL,
-						Mode:        "manual",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
+						Mode: "manual",
 						Notifications: dotaiv1alpha1.NotificationConfig{
 							Slack: dotaiv1alpha1.SlackConfig{
 								Enabled: true,
@@ -572,7 +592,11 @@ var _ = Describe("RemediationPolicy Notifications", func() {
 							},
 						},
 						McpEndpoint: mockMcpServer.URL,
-						Mode:        "manual",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
+						Mode: "manual",
 						Notifications: dotaiv1alpha1.NotificationConfig{
 							Slack: dotaiv1alpha1.SlackConfig{
 								Enabled: true,
@@ -718,7 +742,11 @@ var _ = Describe("RemediationPolicy Notifications", func() {
 						},
 					},
 					McpEndpoint: mockMcpServer.URL,
-					Mode:        "manual",
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-auth-secret",
+						Key:  "api-key",
+					},
+					Mode: "manual",
 					Notifications: dotaiv1alpha1.NotificationConfig{
 						Slack: dotaiv1alpha1.SlackConfig{
 							Enabled:          true,

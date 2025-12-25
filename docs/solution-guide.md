@@ -662,4 +662,5 @@ Planned features for future releases:
 ## Next Steps
 
 - Explore the [Remediation Guide](remediation-guide.md) for event-driven remediation
+- Learn about [Capability Scanning](capability-scan-guide.md) for autonomous capability discovery
 - Check [Troubleshooting Guide](troubleshooting.md) for common issues

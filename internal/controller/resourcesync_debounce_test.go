@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/utils/ptr"
 )
 
 func TestDebounceBuffer_Record(t *testing.T) {
@@ -218,7 +219,7 @@ func TestDebounceBuffer_FlushRequeuesOnError(t *testing.T) {
 	mcpClient := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
 		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
-		MaxRetries: 0, // No retries for faster test
+		MaxRetries: ptr.To(0), // No retries for faster test
 	})
 
 	changeQueue := make(chan *ResourceChange, 10)
@@ -536,7 +537,7 @@ func TestDebounceBuffer_FlushRecordsErrorOnFailure(t *testing.T) {
 	mcpClient := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
 		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
-		MaxRetries: 0, // No retries for faster test
+		MaxRetries: ptr.To(0), // No retries for faster test
 	})
 
 	changeQueue := make(chan *ResourceChange, 10)
@@ -626,6 +627,7 @@ func TestDebounceBuffer_FlushRecordsErrorOnMCPErrorResponse(t *testing.T) {
 	mcpClient := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
 		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
+		MaxRetries: ptr.To(0), // No retries for faster test
 	})
 
 	changeQueue := make(chan *ResourceChange, 10)

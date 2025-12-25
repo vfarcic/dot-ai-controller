@@ -184,7 +184,48 @@ kubectl get resourcesyncconfigs --output jsonpath='{.items[*].status.active}'
 kubectl get resourcesyncconfigs --output jsonpath='{.items[*].status.watchedResourceTypes}'
 ```
 
-### 8. ResourceSync High Traffic or Performance Issues
+### 8. CapabilityScanConfig Not Scanning
+
+**Symptoms:**
+```bash
+# CapabilityScanConfig status shows errors or not ready
+kubectl get capabilityscanconfigs --output yaml
+```
+
+**Diagnosis:**
+```bash
+# Check CapabilityScanConfig status
+kubectl get capabilityscanconfigs --output jsonpath='{.items[*].status}'
+
+# Check controller logs for scan errors
+kubectl logs --selector app.kubernetes.io/name=dot-ai-controller --namespace dot-ai | grep -i "capabilityscan"
+
+# Verify auth secret exists
+kubectl get secret mcp-credentials --namespace dot-ai
+```
+
+**Common Causes:**
+- MCP endpoint not available
+- Wrong `mcp.endpoint` URL in CapabilityScanConfig
+- Missing or invalid `mcp.authSecretRef` secret
+- Resource filters excluding all resources
+
+**Solution:**
+```bash
+# Verify the MCP endpoint URL is correct
+kubectl get capabilityscanconfigs --output jsonpath='{.items[*].spec.mcp.endpoint}'
+
+# Check if initial scan completed
+kubectl get capabilityscanconfigs --output jsonpath='{.items[*].status.initialScanComplete}'
+
+# Check last error
+kubectl get capabilityscanconfigs --output jsonpath='{.items[*].status.lastError}'
+
+# Verify include/exclude filters aren't too restrictive
+kubectl get capabilityscanconfigs --output jsonpath='{.items[*].spec.includeResources}'
+```
+
+### 9. ResourceSync High Traffic or Performance Issues
 
 **Symptoms:**
 - High CPU/memory usage on controller
@@ -228,6 +269,9 @@ kubectl get remediationpolicies --namespace dot-ai --output yaml
 
 # ResourceSyncConfig configuration and status
 kubectl get resourcesyncconfigs --all-namespaces --output yaml
+
+# CapabilityScanConfig configuration and status
+kubectl get capabilityscanconfigs --all-namespaces --output yaml
 
 # Recent events
 kubectl get events --namespace dot-ai --sort-by='.lastTimestamp' --field-selector type=Warning

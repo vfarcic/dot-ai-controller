@@ -486,6 +486,10 @@ var _ = Describe("RemediationPolicy Rate Limiting", func() {
 							{Type: "Warning", Reason: "BackOff"},
 						},
 						McpEndpoint: "http://test-mcp:3456/api/v1/tools/remediate",
+						McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+							Name: "mcp-auth-secret",
+							Key:  "api-key",
+						},
 						RateLimiting: dotaiv1alpha1.RateLimiting{
 							EventsPerMinute: 5,
 						},

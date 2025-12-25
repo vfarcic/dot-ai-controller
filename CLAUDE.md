@@ -190,6 +190,7 @@ Test files follow Go convention: `*_test.go` alongside source files.
 - **Do NOT use `go test ./...`** - this includes e2e tests but skips Kind cluster setup, causing failures
 - Fix all test failures before updating PRDs, documentation, or moving to next tasks
 - Test failures are as important as functionality - they ensure maintainability and regression prevention
+- After tests pass, look for opportunities to reduce execution time
 
 ### Test Output
 

@@ -173,14 +173,9 @@ func (r *RemediationPolicyReconciler) generateAndLogMcpRequest(ctx context.Conte
 }
 
 // getMcpAuthToken resolves the MCP authentication token from a Secret reference
-// Returns empty string if no auth is configured (auth is optional)
 func (r *RemediationPolicyReconciler) getMcpAuthToken(ctx context.Context, policy *dotaiv1alpha1.RemediationPolicy) (string, error) {
-	if policy.Spec.McpAuthSecretRef == nil {
-		return "", nil // No auth configured - this is valid
-	}
-
 	logger := logf.FromContext(ctx)
-	secretRef := policy.Spec.McpAuthSecretRef
+	secretRef := &policy.Spec.McpAuthSecretRef
 
 	// Fetch the Secret
 	secret := &corev1.Secret{}

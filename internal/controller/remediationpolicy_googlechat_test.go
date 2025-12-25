@@ -110,7 +110,11 @@ var _ = Describe("RemediationPolicy Google Chat Notifications", func() {
 						},
 					},
 					McpEndpoint: mockMcpServer.URL,
-					Mode:        "manual",
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-auth-secret",
+						Key:  "api-key",
+					},
+					Mode: "manual",
 					Notifications: dotaiv1alpha1.NotificationConfig{
 						GoogleChat: dotaiv1alpha1.GoogleChatConfig{
 							Enabled:          true,

@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/utils/ptr"
 )
 
 func TestSyncResponse_GetSuccessCounts(t *testing.T) {
@@ -255,7 +256,7 @@ func TestMCPResourceSyncClient_SyncResources_Error(t *testing.T) {
 	client := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
 		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
-		MaxRetries: 0,
+		MaxRetries: ptr.To(0),
 	})
 
 	// Test sync - should return both response and error for partial failures
@@ -280,7 +281,7 @@ func TestMCPResourceSyncClient_SyncResources_HTTPError(t *testing.T) {
 	client := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
 		Endpoint:   server.URL + "/api/v1/resources/sync",
 		HTTPClient: server.Client(),
-		MaxRetries: 0,
+		MaxRetries: ptr.To(0),
 	})
 
 	ctx := context.Background()
@@ -367,7 +368,7 @@ func TestMCPResourceSyncClient_RetryOnFailure(t *testing.T) {
 	client := NewMCPResourceSyncClient(MCPResourceSyncClientConfig{
 		Endpoint:       server.URL + "/api/v1/resources/sync",
 		HTTPClient:     server.Client(),
-		MaxRetries:     3,
+		MaxRetries:     ptr.To(3),
 		InitialBackoff: 10 * time.Millisecond, // Short backoff for test
 		MaxBackoff:     50 * time.Millisecond,
 	})
