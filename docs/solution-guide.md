@@ -1,5 +1,11 @@
 # Solution CRD Guide
 
+## Video: Kubernetes ownerReferences and Resource Grouping
+
+[![Kubernetes ownerReferences and Resource Grouping with the Solution CRD](https://img.youtube.com/vi/UEkhIMx6B6E/maxresdefault.jpg)](https://youtu.be/UEkhIMx6B6E)
+
+This video explains the problem of understanding what resources compose an application in Kubernetes, explores how Kubernetes ownership and ownerReferences work for garbage collection, and demonstrates how the Solution CRD provides a better approach by wrapping related resources into logical groups with status, context, and relationships.
+
 ## Overview
 
 The **Solution CRD** is a Kubernetes Custom Resource Definition that tracks deployed solutions and their constituent resources. It acts as a parent resource that groups all Kubernetes resources (Deployments, Services, ConfigMaps, etc.) that compose a logical solution, preserving metadata and context not available in individual resources.
