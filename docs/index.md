@@ -88,6 +88,12 @@ Keep your cluster's capability data up-to-date for AI-powered recommendations:
 
 ## Quick Start
 
+> **Recommended**: For the easiest setup, we recommend installing the complete dot-ai stack which includes all components. See the [Stack Installation Guide](https://devopstoolkit.ai/docs/stack).
+>
+> The stack automatically applies CapabilityScanConfig and ResourceSyncConfig CRs. For RemediationPolicy and Solution CRs, see the [Remediation Guide](remediation-guide.md) and [Solution Guide](solution-guide.md) to configure them based on your needs.
+>
+> Continue below if you want to install this component individually (for non-Kubernetes setups or granular control).
+
 ### 1. Install Controller
 
 ```bash
