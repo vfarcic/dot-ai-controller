@@ -10,7 +10,8 @@
     "kubectl-tree@0.4.6",
     "vals@0.42.5",
     "gh@2.83.1",
-    "git@2.51.2"
+    "git@2.51.2",
+    "yq-go@4.47.3"
   ],
   "shell": {
     "init_hook": [
