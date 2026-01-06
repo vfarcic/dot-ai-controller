@@ -1,16 +1,11 @@
 {
   "mcpServers": {
     "dot-ai": {
-      "command": "docker",
-      "args": [
-        "compose", 
-        "-f",
-        "docker-compose-dot-ai.yaml",
-        "run", 
-        "--rm",
-        "--remove-orphans",
-        "dot-ai"
-      ]
+      "type": "http",
+      "url": "${DOT_AI_URL:-https://dot-ai.devopstoolkit.ai}",
+      "headers": {
+        "Authorization": "Bearer ${DOT_AI_AUTH_TOKEN}"
+      }
     },
     "coderabbitai": {
       "command": "npx",

@@ -19,7 +19,9 @@
       "export CC=/usr/bin/clang",
       "export CXX=/usr/bin/clang++",
       "unset SDKROOT",
-      "unset DEVELOPER_DIR"
+      "unset DEVELOPER_DIR",
+      "[ -n \"$USE_VALS\" ] && eval \"$(vals env -export -f .env.vals.yaml)\" || true",
+      "[ -f .env ] && source .env || true"
     ],
     "scripts": {}
   }
