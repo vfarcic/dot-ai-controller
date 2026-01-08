@@ -140,14 +140,23 @@ See the [Remediation Guide](remediation-guide.md) for complete examples, configu
 First, install the [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp), then:
 
 ```bash
+# Create a secret with your MCP auth token (if not already created)
+kubectl create secret generic dot-ai-secrets \
+  --namespace dot-ai \
+  --from-literal=auth-token=your-auth-token-here
+
 # Create a ResourceSyncConfig to enable semantic search
 kubectl apply --filename - <<'EOF'
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: ResourceSyncConfig
 metadata:
   name: default-sync
+  namespace: dot-ai
 spec:
   mcpEndpoint: http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/resources/sync
+  mcpAuthSecretRef:
+    name: dot-ai-secrets
+    key: auth-token
   debounceWindowSeconds: 10
   resyncIntervalMinutes: 60
 EOF
