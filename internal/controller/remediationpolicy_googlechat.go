@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 
@@ -225,7 +226,7 @@ func (r *RemediationPolicyReconciler) createGoogleChatStartSections(policy *dota
 			Widgets: []GoogleChatWidget{
 				{
 					TextParagraph: &GoogleChatTextParagraph{
-						Text: mcpRequest.Issue,
+						Text: html.EscapeString(mcpRequest.Issue),
 					},
 				},
 			},
@@ -259,7 +260,7 @@ func (r *RemediationPolicyReconciler) createGoogleChatCompleteSections(policy *d
 			Widgets: []GoogleChatWidget{
 				{
 					TextParagraph: &GoogleChatTextParagraph{
-						Text: resultText,
+						Text: html.EscapeString(resultText),
 					},
 				},
 			},
@@ -313,7 +314,7 @@ func (r *RemediationPolicyReconciler) createGoogleChatCompleteSections(policy *d
 		Widgets: []GoogleChatWidget{
 			{
 				TextParagraph: &GoogleChatTextParagraph{
-					Text: mcpRequest.Issue,
+					Text: html.EscapeString(mcpRequest.Issue),
 				},
 			},
 		},
@@ -377,7 +378,7 @@ func (r *RemediationPolicyReconciler) createGoogleChatMcpDetailSections(mcpRespo
 			if rootCause, ok := analysis["rootCause"].(string); ok && rootCause != "" {
 				analysisWidgets = append(analysisWidgets, GoogleChatWidget{
 					TextParagraph: &GoogleChatTextParagraph{
-						Text: fmt.Sprintf("<b>Root Cause:</b> %s", rootCause),
+						Text: fmt.Sprintf("<b>Root Cause:</b> %s", html.EscapeString(rootCause)),
 					},
 				})
 			}
@@ -421,7 +422,7 @@ func (r *RemediationPolicyReconciler) createGoogleChatMcpDetailSections(mcpRespo
 						if cmd, ok := actionMap["command"].(string); ok && cmd != "" {
 							cmdWidgets = append(cmdWidgets, GoogleChatWidget{
 								TextParagraph: &GoogleChatTextParagraph{
-									Text: fmt.Sprintf("<code>%s</code>", cmd),
+									Text: fmt.Sprintf("<code>%s</code>", html.EscapeString(cmd)),
 								},
 							})
 						}
@@ -489,7 +490,7 @@ func (r *RemediationPolicyReconciler) createGoogleChatMcpDetailSections(mcpRespo
 			if reason, ok := mcpResponse.Error.Details["reason"].(string); ok && reason != "" {
 				errorWidgets = append(errorWidgets, GoogleChatWidget{
 					TextParagraph: &GoogleChatTextParagraph{
-						Text: fmt.Sprintf("<b>Error Details:</b> %s", reason),
+						Text: fmt.Sprintf("<b>Error Details:</b> %s", html.EscapeString(reason)),
 					},
 				})
 			}

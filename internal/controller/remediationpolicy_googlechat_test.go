@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"time"
 
@@ -317,6 +318,304 @@ var _ = Describe("RemediationPolicy Google Chat Notifications", func() {
 					defer googleChatMutex.RUnlock()
 					return len(googleChatRequests)
 				}, "2s").Should(Equal(0))
+			})
+		})
+
+		Context("HTML Special Character Escaping (Issue #37)", func() {
+			// These tests verify that commands and text containing HTML special characters
+			// like <, >, & are properly escaped to prevent truncation in Google Chat.
+			// See: https://github.com/vfarcic/dot-ai-controller/issues/37
+			//
+			// Note: When testing JSON output, html.EscapeString() converts:
+			//   < -> &lt;
+			//   > -> &gt;
+			//   & -> &amp;
+			// But json.Marshal() then encodes & as \u0026, so in JSON:
+			//   &lt; -> \u0026lt;
+			//   &gt; -> \u0026gt;
+			//   &amp; -> \u0026amp;
+			// We verify the struct content directly to avoid JSON encoding complexity.
+
+			It("should escape < characters in commands to prevent truncation", func() {
+				// Create MCP response with commands containing < characters
+				mcpResponse := &McpResponse{
+					Success: true,
+					Data: &struct {
+						Result        map[string]interface{} `json:"result"`
+						Tool          string                 `json:"tool"`
+						ExecutionTime float64                `json:"executionTime"`
+					}{
+						ExecutionTime: 1500,
+						Result: map[string]interface{}{
+							"message":    "Remediation completed",
+							"confidence": 0.95,
+							"remediation": map[string]interface{}{
+								"actions": []interface{}{
+									map[string]interface{}{
+										"command": `kubectl patch pvc my-pvc --type='json' -p '[{"op":"replace","path":"<spec>","value":"test"}]'`,
+									},
+								},
+								"executed": false,
+							},
+						},
+					},
+				}
+
+				mcpRequest := &dotaiv1alpha1.McpRequest{
+					Mode:  "manual",
+					Issue: "PVC storage issue with <important> data",
+				}
+
+				// Create message
+				message := reconciler.createGoogleChatMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
+
+				// Verify the struct content directly
+				// Find the "Recommended Commands" section and check the command widget
+				var commandSection *GoogleChatSection
+				var issueSection *GoogleChatSection
+				for i := range message.CardsV2[0].Card.Sections {
+					if message.CardsV2[0].Card.Sections[i].Header == "Recommended Commands" {
+						commandSection = &message.CardsV2[0].Card.Sections[i]
+					}
+					if message.CardsV2[0].Card.Sections[i].Header == "Original Issue" {
+						issueSection = &message.CardsV2[0].Card.Sections[i]
+					}
+				}
+
+				Expect(commandSection).NotTo(BeNil(), "Should have Recommended Commands section")
+				Expect(commandSection.Widgets).NotTo(BeEmpty())
+
+				// Verify the command text contains escaped < and >
+				commandText := commandSection.Widgets[0].TextParagraph.Text
+				Expect(commandText).To(ContainSubstring("&lt;spec&gt;"))
+				Expect(commandText).NotTo(ContainSubstring(`"<spec>"`))
+
+				// Verify the issue text is also escaped
+				Expect(issueSection).NotTo(BeNil(), "Should have Original Issue section")
+				issueText := issueSection.Widgets[0].TextParagraph.Text
+				Expect(issueText).To(ContainSubstring("&lt;important&gt;"))
+			})
+
+			It("should escape > and & characters in commands", func() {
+				mcpResponse := &McpResponse{
+					Success: true,
+					Data: &struct {
+						Result        map[string]interface{} `json:"result"`
+						Tool          string                 `json:"tool"`
+						ExecutionTime float64                `json:"executionTime"`
+					}{
+						ExecutionTime: 1500,
+						Result: map[string]interface{}{
+							"message":    "Remediation completed",
+							"confidence": 0.95,
+							"remediation": map[string]interface{}{
+								"actions": []interface{}{
+									map[string]interface{}{
+										"command": `echo "value > 10 && value < 20" | grep test`,
+									},
+								},
+								"executed": false,
+							},
+						},
+					},
+				}
+
+				mcpRequest := &dotaiv1alpha1.McpRequest{
+					Mode:  "manual",
+					Issue: "Check if value > threshold && retry",
+				}
+
+				message := reconciler.createGoogleChatMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
+
+				// Find the command section
+				var commandSection *GoogleChatSection
+				var issueSection *GoogleChatSection
+				for i := range message.CardsV2[0].Card.Sections {
+					if message.CardsV2[0].Card.Sections[i].Header == "Recommended Commands" {
+						commandSection = &message.CardsV2[0].Card.Sections[i]
+					}
+					if message.CardsV2[0].Card.Sections[i].Header == "Original Issue" {
+						issueSection = &message.CardsV2[0].Card.Sections[i]
+					}
+				}
+
+				Expect(commandSection).NotTo(BeNil())
+				commandText := commandSection.Widgets[0].TextParagraph.Text
+
+				// Verify all special characters are escaped
+				Expect(commandText).To(ContainSubstring("&gt;"))
+				Expect(commandText).To(ContainSubstring("&lt;"))
+				Expect(commandText).To(ContainSubstring("&amp;"))
+
+				// Verify issue text is also escaped
+				Expect(issueSection).NotTo(BeNil())
+				issueText := issueSection.Widgets[0].TextParagraph.Text
+				Expect(issueText).To(ContainSubstring("&gt;"))
+				Expect(issueText).To(ContainSubstring("&amp;"))
+			})
+
+			It("should escape special characters in root cause analysis", func() {
+				mcpResponse := &McpResponse{
+					Success: true,
+					Data: &struct {
+						Result        map[string]interface{} `json:"result"`
+						Tool          string                 `json:"tool"`
+						ExecutionTime float64                `json:"executionTime"`
+					}{
+						ExecutionTime: 1500,
+						Result: map[string]interface{}{
+							"message":    "Analysis completed",
+							"confidence": 0.90,
+							"analysis": map[string]interface{}{
+								"rootCause":  "Pod failed because memory < 512MB && CPU > 90%",
+								"confidence": 0.85,
+							},
+						},
+					},
+				}
+
+				mcpRequest := &dotaiv1alpha1.McpRequest{
+					Mode:  "manual",
+					Issue: "Pod OOM killed",
+				}
+
+				message := reconciler.createGoogleChatMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
+
+				// Find the Analysis section
+				var analysisSection *GoogleChatSection
+				for i := range message.CardsV2[0].Card.Sections {
+					if message.CardsV2[0].Card.Sections[i].Header == "Analysis" {
+						analysisSection = &message.CardsV2[0].Card.Sections[i]
+						break
+					}
+				}
+
+				Expect(analysisSection).NotTo(BeNil(), "Should have Analysis section")
+				Expect(analysisSection.Widgets).NotTo(BeEmpty())
+
+				// Find the text paragraph with root cause
+				var rootCauseText string
+				for _, widget := range analysisSection.Widgets {
+					if widget.TextParagraph != nil {
+						rootCauseText = widget.TextParagraph.Text
+						break
+					}
+				}
+
+				// Verify root cause special characters are escaped
+				Expect(rootCauseText).To(ContainSubstring("&lt;"))
+				Expect(rootCauseText).To(ContainSubstring("&gt;"))
+				Expect(rootCauseText).To(ContainSubstring("&amp;"))
+			})
+
+			It("should escape special characters in error details", func() {
+				mcpResponse := &McpResponse{
+					Success: false,
+					Error: &struct {
+						Code    string                 `json:"code"`
+						Message string                 `json:"message"`
+						Details map[string]interface{} `json:"details,omitempty"`
+					}{
+						Code:    "REMEDIATION_FAILED",
+						Message: "Failed to apply fix",
+						Details: map[string]interface{}{
+							"reason": "Value must be < 100 && > 0",
+						},
+					},
+				}
+
+				mcpRequest := &dotaiv1alpha1.McpRequest{
+					Mode:  "manual",
+					Issue: "Test issue",
+				}
+
+				message := reconciler.createGoogleChatMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
+
+				// Find the Error section
+				var errorSection *GoogleChatSection
+				for i := range message.CardsV2[0].Card.Sections {
+					if message.CardsV2[0].Card.Sections[i].Header == "Error" {
+						errorSection = &message.CardsV2[0].Card.Sections[i]
+						break
+					}
+				}
+
+				Expect(errorSection).NotTo(BeNil(), "Should have Error section")
+
+				// Find the text paragraph with error details
+				var errorDetailsText string
+				for _, widget := range errorSection.Widgets {
+					if widget.TextParagraph != nil {
+						errorDetailsText = widget.TextParagraph.Text
+						break
+					}
+				}
+
+				// Verify error details special characters are escaped
+				Expect(errorDetailsText).To(ContainSubstring("&lt;"))
+				Expect(errorDetailsText).To(ContainSubstring("&gt;"))
+				Expect(errorDetailsText).To(ContainSubstring("&amp;"))
+			})
+
+			It("should preserve full command with special characters without truncation", func() {
+				// This test specifically verifies the fix for issue #37
+				// Commands should not be truncated at < character
+				fullCommand := `kubectl patch pvc data-pvc --type='json' -p '[{"op":"replace","path":"/spec/resources/requests/storage","value":"<SIZE>"}]' --namespace=production`
+
+				mcpResponse := &McpResponse{
+					Success: true,
+					Data: &struct {
+						Result        map[string]interface{} `json:"result"`
+						Tool          string                 `json:"tool"`
+						ExecutionTime float64                `json:"executionTime"`
+					}{
+						ExecutionTime: 1500,
+						Result: map[string]interface{}{
+							"message":    "Remediation completed",
+							"confidence": 0.95,
+							"remediation": map[string]interface{}{
+								"actions": []interface{}{
+									map[string]interface{}{
+										"command": fullCommand,
+									},
+								},
+								"executed": false,
+							},
+						},
+					},
+				}
+
+				mcpRequest := &dotaiv1alpha1.McpRequest{
+					Mode:  "manual",
+					Issue: "Storage issue",
+				}
+
+				message := reconciler.createGoogleChatMessage(testPolicy, testEvent, "complete", mcpRequest, mcpResponse)
+
+				// Find the command section
+				var commandSection *GoogleChatSection
+				for i := range message.CardsV2[0].Card.Sections {
+					if message.CardsV2[0].Card.Sections[i].Header == "Recommended Commands" {
+						commandSection = &message.CardsV2[0].Card.Sections[i]
+						break
+					}
+				}
+
+				Expect(commandSection).NotTo(BeNil())
+				commandText := commandSection.Widgets[0].TextParagraph.Text
+
+				// The command should contain ALL parts, including after the < character
+				// Verify the part after < is present (escaped)
+				Expect(commandText).To(ContainSubstring("SIZE"))
+				Expect(commandText).To(ContainSubstring("--namespace=production"))
+
+				// Verify the full command is present with proper escaping
+				escapedCommand := strings.ReplaceAll(fullCommand, "&", "&amp;")
+				escapedCommand = strings.ReplaceAll(escapedCommand, "<", "&lt;")
+				escapedCommand = strings.ReplaceAll(escapedCommand, ">", "&gt;")
+				escapedCommand = strings.ReplaceAll(escapedCommand, "'", "&#39;")
+				escapedCommand = strings.ReplaceAll(escapedCommand, "\"", "&#34;")
+				Expect(commandText).To(ContainSubstring(escapedCommand))
 			})
 		})
 	})
