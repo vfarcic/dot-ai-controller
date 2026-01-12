@@ -92,7 +92,9 @@ func (b *DebounceBuffer) Run(ctx context.Context) {
 }
 
 // record adds a change to the buffer
-// Last-state-wins for upserts, deletes always preserved
+// Last-state-wins: the most recent event always takes precedence.
+// This ensures that if a resource is deleted and recreated (with the same name),
+// the new resource will be properly synced to MCP.
 func (b *DebounceBuffer) record(change *ResourceChange) {
 	if change == nil {
 		return
@@ -111,19 +113,16 @@ func (b *DebounceBuffer) record(change *ResourceChange) {
 		return
 	}
 
-	existing, exists := b.changes[id]
-
+	// Last-state-wins: always use the most recent event.
+	// This handles the delete-then-recreate case correctly:
+	// - Delete arrives first -> recorded
+	// - Upsert arrives for new resource with same name -> replaces delete
+	// - Result: new resource is synced to MCP
+	b.changes[id] = change
 	if change.Action == ActionDelete {
-		// Delete always wins and is always preserved
-		b.changes[id] = change
 		logger.V(2).Info("Recorded delete", "id", id)
-	} else if !exists || existing.Action != ActionDelete {
-		// Upsert: keep latest state (unless already marked for delete)
-		b.changes[id] = change
-		logger.V(2).Info("Recorded upsert", "id", id)
 	} else {
-		// Upsert received but already marked for delete - ignore
-		logger.V(2).Info("Ignoring upsert for resource marked for delete", "id", id)
+		logger.V(2).Info("Recorded upsert", "id", id)
 	}
 }
 

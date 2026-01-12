@@ -77,21 +77,22 @@ func TestDebounceBuffer_DeleteOverwritesUpsert(t *testing.T) {
 	assert.Equal(t, ActionDelete, change.Action)
 }
 
-func TestDebounceBuffer_UpsertIgnoredAfterDelete(t *testing.T) {
+func TestDebounceBuffer_UpsertReplacesDelete(t *testing.T) {
 	changeQueue := make(chan *ResourceChange, 10)
 	buffer := NewDebounceBuffer(DebounceBufferConfig{
 		Window:      1 * time.Hour,
 		ChangeQueue: changeQueue,
 	})
 
-	// First delete
+	// First delete (old resource)
 	buffer.record(&ResourceChange{
 		Action:           ActionDelete,
 		ID:               "test:v1:Pod:foo",
 		DeleteIdentifier: &ResourceIdentifier{Name: "foo", Kind: "Pod", APIVersion: "v1", Namespace: "test"},
 	})
 
-	// Then upsert - should be ignored because delete is preserved
+	// Then upsert (new resource with same name) - should replace delete
+	// This handles the delete-then-recreate scenario correctly
 	buffer.record(&ResourceChange{
 		Action: ActionUpsert,
 		ID:     "test:v1:Pod:foo",
@@ -100,11 +101,11 @@ func TestDebounceBuffer_UpsertIgnoredAfterDelete(t *testing.T) {
 
 	assert.Equal(t, 1, buffer.PendingCount())
 
-	// Verify the change is still a delete
+	// Verify the change is now an upsert (new resource should be synced)
 	buffer.mu.Lock()
 	change := buffer.changes["test:v1:Pod:foo"]
 	buffer.mu.Unlock()
-	assert.Equal(t, ActionDelete, change.Action)
+	assert.Equal(t, ActionUpsert, change.Action)
 }
 
 func TestDebounceBuffer_EmptyIDDropped(t *testing.T) {
