@@ -73,14 +73,21 @@ func (b *DebounceBuffer) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			logger.Info("Debounce buffer stopping, performing final flush")
-			// Final flush before exit
-			b.flush(ctx)
+			// Use a fresh context with timeout for final flush since the original
+			// context is cancelled. This ensures pending changes (especially deletes)
+			// are synced to MCP before shutdown.
+			flushCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			b.flush(flushCtx)
+			cancel()
 			return
 
 		case change, ok := <-b.changeQueue:
 			if !ok {
 				logger.Info("Change queue closed, stopping debounce buffer")
-				b.flush(ctx)
+				// Use a fresh context with timeout since the original context may be cancelled
+				flushCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				b.flush(flushCtx)
+				cancel()
 				return
 			}
 			b.record(change)
