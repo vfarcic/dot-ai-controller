@@ -1,72 +1,135 @@
-name: Test and Release
+name: Release
 
 on:
+  # Trigger 1: Tag push (normal release flow)
   push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+    tags:
+      - 'v*'
+
+  # Trigger 2: Manual (for retroactive cleanup or special cases)
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.44.0)'
+        required: true
+      notes_only:
+        description: 'Only update release notes (skip artifact publishing)'
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.24'
-
-    - name: Run Unit Tests
-      run: make test
-
-    - name: Run E2E Tests
-      run: make test-e2e
-
-  build-and-release:
+  release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.event_name == 'push'
-    permissions:
-      contents: write
-      packages: write
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      version_no_v: ${{ steps.version.outputs.version_no_v }}
+      version: ${{ steps.config.outputs.version }}
+      version_no_v: ${{ steps.config.outputs.version_no_v }}
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0  # Fetch all history for version calculation
+        fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Pull Latest Changes
+    - name: Determine version and mode
+      id: config
+      run: |
+        if [[ "${{ github.event_name }}" == "push" ]]; then
+          # Tag trigger: extract version from tag, full release
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          NOTES_ONLY="false"
+        else
+          # Manual trigger: use inputs
+          VERSION="${{ inputs.version }}"
+          NOTES_ONLY="${{ inputs.notes_only }}"
+        fi
+        echo "version=v$VERSION" >> $GITHUB_OUTPUT
+        echo "version_no_v=$VERSION" >> $GITHUB_OUTPUT
+        echo "notes_only=$NOTES_ONLY" >> $GITHUB_OUTPUT
+        echo "Release version: v$VERSION"
+        echo "Notes only mode: $NOTES_ONLY"
+
+    - name: Setup git config
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git pull --rebase origin main
+
+    - name: Pull Latest Changes
+      if: steps.config.outputs.notes_only != 'true'
+      run: git pull --rebase origin main
+
+    - name: Setup Python (for towncrier)
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install towncrier
+      run: pip install towncrier
+
+    - name: Build changelog with towncrier
+      id: towncrier
+      run: |
+        VERSION=${{ steps.config.outputs.version_no_v }}
+
+        # Check if there are any changelog fragments
+        FRAGMENT_COUNT=$(find changelog.d -name "*.md" ! -name ".gitkeep" 2>/dev/null | wc -l)
+
+        if [ "$FRAGMENT_COUNT" -gt 0 ]; then
+          echo "Found $FRAGMENT_COUNT changelog fragments"
+          towncrier build --version $VERSION --yes
+          echo "has_fragments=true" >> $GITHUB_OUTPUT
+        else
+          echo "No changelog fragments found, skipping towncrier build"
+          echo "has_fragments=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Extract release notes from CHANGELOG
+      id: notes
+      run: |
+        VERSION=${{ steps.config.outputs.version_no_v }}
+
+        # Extract the section for this version from CHANGELOG.md
+        if [ -f "docs/CHANGELOG.md" ]; then
+          NOTES=$(awk "/^## \[$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" docs/CHANGELOG.md)
+
+          if [ -n "$NOTES" ]; then
+            echo "Extracted release notes for version $VERSION"
+            echo "$NOTES" > release_notes_content.md
+            echo "has_notes=true" >> $GITHUB_OUTPUT
+          else
+            echo "No release notes found for version $VERSION in CHANGELOG"
+            echo "has_notes=false" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "docs/CHANGELOG.md not found"
+          echo "has_notes=false" >> $GITHUB_OUTPUT
+        fi
 
     - name: Setup Go
+      if: steps.config.outputs.notes_only != 'true'
       uses: actions/setup-go@v5
       with:
         go-version: '1.24'
 
     - name: Setup QEMU
+      if: steps.config.outputs.notes_only != 'true'
       uses: docker/setup-qemu-action@v3
 
     - name: Setup Docker Buildx
+      if: steps.config.outputs.notes_only != 'true'
       uses: docker/setup-buildx-action@v3
 
     - name: Login to Container Registry
+      if: steps.config.outputs.notes_only != 'true'
       uses: docker/login-action@v3
       with:
         registry: ${{ env.REGISTRY }}
@@ -74,34 +137,13 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install Devbox
+      if: steps.config.outputs.notes_only != 'true'
       uses: jetify-com/devbox-install-action@v0.14.0
       with:
         enable-cache: true
 
-    - name: Calculate Next Version
-      id: version
-      run: |
-        # Ensure we have all tags
-        git fetch --tags
-        
-        # Get the latest tag from all tags, not just those reachable from current commit
-        latest_tag=$(git tag --sort=-version:refname | head -n1 || echo "v0.0.0")
-        echo "Latest tag: $latest_tag"
-        
-        # Extract version numbers (remove 'v' prefix)
-        version=${latest_tag#v}
-        IFS='.' read -r major minor patch <<< "$version"
-        echo "Parsed version: major=$major, minor=$minor, patch=$patch"
-        
-        # Increment minor version
-        minor=$((minor + 1))
-        new_version="v${major}.${minor}.0"
-        
-        echo "New version: $new_version"
-        echo "version=$new_version" >> $GITHUB_OUTPUT
-        echo "version_no_v=${new_version#v}" >> $GITHUB_OUTPUT
-
     - name: Generate Manifests and Sync with Helm Chart
+      if: steps.config.outputs.notes_only != 'true'
       run: |
         make generate manifests
 
@@ -113,22 +155,13 @@ jobs:
         sed '/metadata:/a\  labels:\n    {{- include "dot-ai-controller.labels" . | nindent 4 }}' /tmp/manager-role.yaml > charts/dot-ai-controller/templates/manager-role.yaml
 
     - name: Update Helm Chart Version
+      if: steps.config.outputs.notes_only != 'true'
       run: |
-        sed -i "s/^version:.*/version: ${{ steps.version.outputs.version_no_v }}/" charts/dot-ai-controller/Chart.yaml
-        sed -i "s/^appVersion:.*/appVersion: \"${{ steps.version.outputs.version }}\"/" charts/dot-ai-controller/Chart.yaml
-
-    - name: Commit Version Changes
-      run: |
-        git add -A
-        git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
-        git push
-
-    - name: Create Git Tag
-      run: |
-        git tag ${{ steps.version.outputs.version }}
-        git push origin ${{ steps.version.outputs.version }}
+        sed -i "s/^version:.*/version: ${{ steps.config.outputs.version_no_v }}/" charts/dot-ai-controller/Chart.yaml
+        sed -i "s/^appVersion:.*/appVersion: \"${{ steps.config.outputs.version }}\"/" charts/dot-ai-controller/Chart.yaml
 
     - name: Build and Push AMD64 Image
+      if: steps.config.outputs.notes_only != 'true'
       id: build-amd64
       uses: docker/build-push-action@v5
       with:
@@ -138,6 +171,7 @@ jobs:
         outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
 
     - name: Build and Push ARM64 Image
+      if: steps.config.outputs.notes_only != 'true'
       id: build-arm64
       uses: docker/build-push-action@v5
       with:
@@ -147,39 +181,106 @@ jobs:
         outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
 
     - name: Create Multi-Platform Manifest
+      if: steps.config.outputs.notes_only != 'true'
       run: |
         docker buildx imagetools create \
-          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} \
+          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.config.outputs.version }} \
           --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
           ${{ steps.build-amd64.outputs.digest }} \
           ${{ steps.build-arm64.outputs.digest }}
 
     - name: Package and Push Helm Chart
+      if: steps.config.outputs.notes_only != 'true'
       run: |
         devbox run -- helm package charts/dot-ai-controller
-        devbox run -- helm push dot-ai-controller-${{ steps.version.outputs.version_no_v }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository }}/charts
+        devbox run -- helm push dot-ai-controller-${{ steps.config.outputs.version_no_v }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository }}/charts
+
+    - name: Commit version and changelog changes
+      if: steps.config.outputs.notes_only != 'true'
+      run: |
+        VERSION=${{ steps.config.outputs.version_no_v }}
+
+        git add -A
+        git commit -m "chore: release v$VERSION
+
+        - Docker image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v$VERSION
+        - Helm chart: oci://${{ env.REGISTRY }}/${{ github.repository }}/charts/dot-ai-controller:$VERSION
+
+        [skip ci]" || echo "No changes to commit"
+
+        git push origin HEAD:main
+
+    - name: Commit changelog changes (notes-only mode)
+      if: steps.config.outputs.notes_only == 'true' && steps.towncrier.outputs.has_fragments == 'true'
+      run: |
+        VERSION=${{ steps.config.outputs.version_no_v }}
+
+        git add docs/CHANGELOG.md changelog.d/
+
+        git commit -m "docs: update release notes for v$VERSION
+
+        [skip ci]" || echo "No changes to commit"
+
+        git push origin HEAD:main
 
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ steps.version.outputs.version }}
-        name: Release ${{ steps.version.outputs.version }}
-        generate_release_notes: true
-        files: |
-          dot-ai-controller-${{ steps.version.outputs.version_no_v }}.tgz
+      run: |
+        VERSION=${{ steps.config.outputs.version_no_v }}
+        NOTES_ONLY=${{ steps.config.outputs.notes_only }}
+
+        # Build release notes content
+        cat > release_body.md << 'HEADER'
+        ## Release Artifacts
+        HEADER
+
+        if [ "$NOTES_ONLY" != "true" ]; then
+          cat >> release_body.md << ARTIFACTS
+        - **Docker image**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v$VERSION\` (also available as \`latest\`)
+        - **Helm chart**: \`oci://${{ env.REGISTRY }}/${{ github.repository }}/charts/dot-ai-controller:$VERSION\`
+
+        ARTIFACTS
+        else
+          echo "*Release notes update only - artifacts were published previously*" >> release_body.md
+          echo "" >> release_body.md
+        fi
+
+        # Append towncrier-generated notes if available
+        if [ -f "release_notes_content.md" ]; then
+          echo "## What's Changed" >> release_body.md
+          echo "" >> release_body.md
+          cat release_notes_content.md >> release_body.md
+        fi
+
+        # Create or update GitHub release
+        if gh release view "v$VERSION" > /dev/null 2>&1; then
+          echo "Updating existing release v$VERSION"
+          gh release edit "v$VERSION" --notes-file release_body.md
+        else
+          echo "Creating new release v$VERSION"
+          gh release create "v$VERSION" \
+            --title "Release v$VERSION" \
+            --notes-file release_body.md \
+            dot-ai-controller-${{ steps.config.outputs.version_no_v }}.tgz || \
+          gh release create "v$VERSION" \
+            --title "Release v$VERSION" \
+            --notes-file release_body.md
+        fi
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Trigger Website Rebuild
+      if: steps.config.outputs.notes_only != 'true'
       uses: peter-evans/repository-dispatch@v3
       with:
         token: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
         repository: vfarcic/dot-ai-website
         event-type: upstream-release
-        client-payload: '{"source": "dot-ai-controller", "version": "${{ steps.version.outputs.version }}"}'
+        client-payload: '{"source": "dot-ai-controller", "version": "${{ steps.config.outputs.version }}"}'
 
   update-umbrella:
-    needs: [build-and-release]
+    needs: [release]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: ${{ !inputs.notes_only }}
     permissions:
       contents: read
 
@@ -197,7 +298,7 @@ jobs:
 
       - name: Update dependency version
         run: |
-          devbox run -- yq -i '(.dependencies[] | select(.name == "dot-ai-controller")).version = "${{ needs.build-and-release.outputs.version_no_v }}"' Chart.yaml
+          devbox run -- yq -i '(.dependencies[] | select(.name == "dot-ai-controller")).version = "${{ needs.release.outputs.version_no_v }}"' Chart.yaml
           echo "Updated Chart.yaml:"
           cat Chart.yaml
 
@@ -206,5 +307,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Chart.yaml
-          git diff --staged --quiet || git commit -m "chore: bump dot-ai-controller to ${{ needs.build-and-release.outputs.version_no_v }}"
+          git diff --staged --quiet || git commit -m "chore: bump dot-ai-controller to ${{ needs.release.outputs.version_no_v }}"
           git push
