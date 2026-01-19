@@ -9,6 +9,16 @@ The ResourceSyncConfig enables:
 - **Change Tracking**: Watches for resource changes (create, update, delete)
 - **Semantic Search**: Syncs resource metadata to MCP for natural language queries
 
+## Stack Installation
+
+If you installed via the [DevOps AI Toolkit Stack](https://devopstoolkit.ai/docs/stack), ResourceSyncConfig is already configured. You can verify with:
+
+```bash
+kubectl get resourcesyncconfig -n dot-ai
+```
+
+Continue below only if you need to customize the configuration or installed the controller individually.
+
 ## Prerequisites
 
 - Controller installed (see [Setup Guide](setup-guide.md))

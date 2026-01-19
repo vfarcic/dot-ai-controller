@@ -12,6 +12,16 @@ The CapabilityScanConfig enables:
 
 This feature works with the [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp) to keep your cluster's capability data up-to-date for AI-powered recommendations.
 
+## Stack Installation
+
+If you installed via the [DevOps AI Toolkit Stack](https://devopstoolkit.ai/docs/stack), CapabilityScanConfig is already configured. You can verify with:
+
+```bash
+kubectl get capabilityscanconfig -n dot-ai
+```
+
+Continue below only if you need to customize the configuration or installed the controller individually.
+
 ## Prerequisites
 
 - Controller installed (see [Setup Guide](setup-guide.md))
