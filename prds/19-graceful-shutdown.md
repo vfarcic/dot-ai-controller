@@ -148,7 +148,7 @@ For Solution controller:
 
 ### Milestone 4: Testing and Documentation
 - [x] Unit tests for shutdown-aware health check
-- [ ] Integration test for graceful shutdown behavior
+- [x] Integration test for graceful shutdown behavior
 - [ ] Update documentation with shutdown configuration options
 
 ## Risks & Mitigations
@@ -188,6 +188,7 @@ spec:
 | 2026-01-23 | Milestone 1 complete: Added `internal/shutdown` package with `Tracker`, `HealthChecker`, and `SetupSignalHandler`. Updated `cmd/main.go` to use shutdown-aware readiness probe. Unit tests passing. |
 | 2026-01-23 | Milestone 2 complete: Configured controller-runtime manager with 20-minute `GracefulShutdownTimeout`. Simplified from configurable flags to hardcoded value. |
 | 2026-01-23 | Milestone 3 complete: Verified HTTP client uses `http.NewRequestWithContext(ctx)`. Added context-aware sleep to retry loops in both controllers. Enhanced shutdown progress logging. Added unit tests for context cancellation behavior. |
+| 2026-01-23 | Milestone 4 (partial): Added integration tests for graceful shutdown in `internal/shutdown/shutdown_integration_test.go`. Tests cover: readiness endpoint behavior during shutdown, shutdown sequence ordering, in-flight operation draining, concurrent access safety, and response timing. |
 
 ---
 
