@@ -6,6 +6,11 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "dot-ai-controller.labels" . | nindent 4 }}
+  {{- $annotations := include "dot-ai-controller.annotations" (dict "global" .Values.annotations "local" nil) -}}
+  {{- if $annotations }}
+  annotations:
+    {{- $annotations | nindent 4 }}
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -13,6 +18,11 @@ metadata:
   name: {{ include "dot-ai-controller.clusterRoleBindingName" . }}
   labels:
     {{- include "dot-ai-controller.labels" . | nindent 4 }}
+  {{- $annotations := include "dot-ai-controller.annotations" (dict "global" .Values.annotations "local" nil) -}}
+  {{- if $annotations }}
+  annotations:
+    {{- $annotations | nindent 4 }}
+  {{- end }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

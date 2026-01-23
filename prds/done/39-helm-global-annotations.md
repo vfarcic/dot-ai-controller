@@ -1,7 +1,8 @@
 # PRD: Global Annotations Support in Helm Chart
 
 **Issue**: [#39](https://github.com/vfarcic/dot-ai-controller/issues/39)
-**Status**: Draft
+**Status**: Complete
+**Completed**: 2026-01-23
 **Priority**: Low
 **Created**: 2026-01-21
 
@@ -37,29 +38,35 @@ annotations: {}
 
 ### Template Helper Function
 
-Create a helper function in `_helpers.tpl` to render annotations:
+Create a helper function in `_helpers.tpl` that merges global and local annotations (consistent with dot-ai-ui pattern):
 
 ```yaml
 {{/*
-Render global annotations if defined.
+Merge global annotations with resource-specific annotations.
+Resource-specific annotations take precedence over global annotations.
+Usage: include "dot-ai-controller.annotations" (dict "global" .Values.annotations "local" .Values.ingress.annotations)
 */}}
 {{- define "dot-ai-controller.annotations" -}}
-{{- if .Values.annotations -}}
-  {{- toYaml .Values.annotations -}}
+{{- $global := .global | default dict -}}
+{{- $local := .local | default dict -}}
+{{- $merged := merge $local $global -}}
+{{- if $merged -}}
+{{- toYaml $merged -}}
 {{- end -}}
 {{- end -}}
 ```
 
 ### Resources to Update
 
-All templates rendering Kubernetes resources:
+Templates rendering workload-related Kubernetes resources:
 
 | Template | Resource(s) | Notes |
 |----------|------------|-------|
 | `deployment.yaml` | Deployment, Pod template | Pod annotations critical for Reloader |
-| `rbac.yaml` | ServiceAccount, ClusterRole, ClusterRoleBinding | |
+| `rbac.yaml` | ServiceAccount, ClusterRoleBinding | |
 | `manager-role.yaml` | ClusterRole | Manager role for controller |
-| CRD templates | CustomResourceDefinitions | Annotations on CRDs (if desired) |
+
+**Note**: CRDs are intentionally excluded - see Decision Log below.
 
 ## Success Criteria
 
@@ -80,10 +87,24 @@ This PRD follows the same pattern as the dot-ai MCP server Helm chart (PRD #336)
 
 ---
 
+## Decision Log
+
+### CRDs Excluded from Global Annotations (2026-01-23)
+
+**Decision**: CRD templates do not receive global annotations.
+
+**Rationale**:
+1. **Use case mismatch**: Reloader and similar tools watch Deployments/Pods, not CRDs
+2. **CRDs are API schemas**: They define resource types, not workloads
+3. **Release workflow constraint**: CRDs are copied from `config/crd/bases/` during release, overwriting any templating
+4. **Consistency**: dot-ai-ui (which has no CRDs) uses the same pattern
+
+---
+
 ## Milestones
 
-- [ ] Create helper function for annotations in `_helpers.tpl`
-- [ ] Add `annotations: {}` to `values.yaml` with documentation comments
-- [ ] Update all templates to include global annotations
-- [ ] Add unit tests for annotation rendering
-- [ ] Update chart documentation with examples
+- [x] Create helper function for annotations in `_helpers.tpl`
+- [x] Add `annotations: {}` to `values.yaml` with documentation comments
+- [x] Update all templates to include global annotations
+- [~] Add unit tests for annotation rendering (deferred - no Helm test framework)
+- [x] Update chart documentation with examples
