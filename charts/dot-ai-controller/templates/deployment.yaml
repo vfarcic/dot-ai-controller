@@ -63,4 +63,4 @@ spec:
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
       serviceAccountName: {{ include "dot-ai-controller.serviceAccountName" . }}
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: 1260

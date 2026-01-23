@@ -1,7 +1,7 @@
 # PRD: Graceful Shutdown Handling
 
 **Issue**: [#19](https://github.com/vfarcic/dot-ai-controller/issues/19)
-**Status**: In Progress
+**Status**: Complete
 **Priority**: Medium
 **Created**: 2025-12-01
 
@@ -149,7 +149,8 @@ For Solution controller:
 ### Milestone 4: Testing and Documentation
 - [x] Unit tests for shutdown-aware health check
 - [x] Integration test for graceful shutdown behavior
-- [ ] Update documentation with shutdown configuration options
+- [x] Update documentation with shutdown configuration options
+  - Note: No user-facing configuration needed - values are hardcoded per design decision (20m timeout, 1260s terminationGracePeriodSeconds in Helm chart)
 
 ## Risks & Mitigations
 
@@ -189,6 +190,7 @@ spec:
 | 2026-01-23 | Milestone 2 complete: Configured controller-runtime manager with 20-minute `GracefulShutdownTimeout`. Simplified from configurable flags to hardcoded value. |
 | 2026-01-23 | Milestone 3 complete: Verified HTTP client uses `http.NewRequestWithContext(ctx)`. Added context-aware sleep to retry loops in both controllers. Enhanced shutdown progress logging. Added unit tests for context cancellation behavior. |
 | 2026-01-23 | Milestone 4 (partial): Added integration tests for graceful shutdown in `internal/shutdown/shutdown_integration_test.go`. Tests cover: readiness endpoint behavior during shutdown, shutdown sequence ordering, in-flight operation draining, concurrent access safety, and response timing. |
+| 2026-01-23 | Milestone 4 complete: Updated Helm chart `terminationGracePeriodSeconds` from 10 to 1260 seconds (21 minutes) to allow graceful shutdown timeout to complete. PRD marked complete - all milestones finished. |
 
 ---
 
