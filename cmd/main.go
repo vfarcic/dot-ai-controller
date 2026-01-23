@@ -26,6 +26,7 @@ import (
 
 	dotaiv1alpha1 "github.com/vfarcic/dot-ai-controller/api/v1alpha1"
 	"github.com/vfarcic/dot-ai-controller/internal/controller"
+	"github.com/vfarcic/dot-ai-controller/internal/shutdown"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -272,13 +273,24 @@ func main() {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+
+	// Create shutdown tracker for graceful shutdown handling
+	// The tracker marks the pod as not-ready immediately on SIGTERM,
+	// allowing Kubernetes to stop routing traffic while in-flight operations drain
+	shutdownTracker := shutdown.NewTracker()
+	shutdownChecker := shutdown.NewHealthChecker(shutdownTracker)
+
+	if err := mgr.AddReadyzCheck("readyz", shutdownChecker.Check); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
 
+	// Setup signal handler that marks shutdown state before cancelling context
+	// This allows readiness probe to fail immediately while manager drains
+	ctx := shutdown.SetupSignalHandler(shutdownTracker)
+
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

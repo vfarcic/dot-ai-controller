@@ -1,7 +1,7 @@
 # PRD: Graceful Shutdown Handling
 
 **Issue**: [#19](https://github.com/vfarcic/dot-ai-controller/issues/19)
-**Status**: Not Started
+**Status**: In Progress
 **Priority**: Medium
 **Created**: 2025-12-01
 
@@ -132,10 +132,10 @@ For Solution controller:
 ## Milestones
 
 ### Milestone 1: Shutdown-Aware Readiness Probe
-- [ ] Create shutdown state tracker (atomic bool)
-- [ ] Implement shutdown-aware health check handler
-- [ ] Wire up SIGTERM handler to set shutdown state
-- [ ] Verify readiness probe returns unhealthy during shutdown
+- [x] Create shutdown state tracker (atomic bool)
+- [x] Implement shutdown-aware health check handler
+- [x] Wire up SIGTERM handler to set shutdown state
+- [x] Verify readiness probe returns unhealthy during shutdown
 
 ### Milestone 2: Configurable Graceful Shutdown
 - [ ] Add `--remediation-shutdown-timeout` flag (default 20m)
@@ -149,7 +149,7 @@ For Solution controller:
 - [ ] Add logging for shutdown progress
 
 ### Milestone 4: Testing and Documentation
-- [ ] Unit tests for shutdown-aware health check
+- [x] Unit tests for shutdown-aware health check
 - [ ] Integration test for graceful shutdown behavior
 - [ ] Update documentation with shutdown configuration options
 
@@ -187,6 +187,7 @@ spec:
 | Date | Update |
 |------|--------|
 | 2025-12-01 | PRD created based on issue #16 discussion about rate limit persistence |
+| 2026-01-23 | Milestone 1 complete: Added `internal/shutdown` package with `Tracker`, `HealthChecker`, and `SetupSignalHandler`. Updated `cmd/main.go` to use shutdown-aware readiness probe. Unit tests passing. |
 
 ---
 
