@@ -404,7 +404,12 @@ func (r *RemediationPolicyReconciler) updatePolicyStatus(ctx context.Context, po
 			jitter := time.Duration(float64(delay) * 0.25 * (2*rand.Float64() - 1))
 			delay += jitter
 
-			time.Sleep(delay)
+			// Context-aware sleep - exit immediately if context is cancelled (e.g., during shutdown)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
 		}
 
 		// Fetch fresh copy to avoid conflicts

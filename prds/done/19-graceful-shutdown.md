@@ -1,7 +1,7 @@
 # PRD: Graceful Shutdown Handling
 
 **Issue**: [#19](https://github.com/vfarcic/dot-ai-controller/issues/19)
-**Status**: Not Started
+**Status**: Complete
 **Priority**: Medium
 **Created**: 2025-12-01
 
@@ -132,26 +132,25 @@ For Solution controller:
 ## Milestones
 
 ### Milestone 1: Shutdown-Aware Readiness Probe
-- [ ] Create shutdown state tracker (atomic bool)
-- [ ] Implement shutdown-aware health check handler
-- [ ] Wire up SIGTERM handler to set shutdown state
-- [ ] Verify readiness probe returns unhealthy during shutdown
+- [x] Create shutdown state tracker (atomic bool)
+- [x] Implement shutdown-aware health check handler
+- [x] Wire up SIGTERM handler to set shutdown state
+- [x] Verify readiness probe returns unhealthy during shutdown
 
-### Milestone 2: Configurable Graceful Shutdown
-- [ ] Add `--remediation-shutdown-timeout` flag (default 20m)
-- [ ] Add `--solution-shutdown-timeout` flag (default 2m)
-- [ ] Configure controller-runtime manager with appropriate timeout
-- [ ] Add shutdown timeout to Helm chart values
+### Milestone 2: Graceful Shutdown Timeout
+- [x] Configure controller-runtime manager with 20-minute graceful shutdown timeout
+- Note: Simplified from configurable flags to hardcoded value per design decision
 
 ### Milestone 3: Context Propagation Verification
-- [ ] Verify RemediationPolicy HTTP client respects context cancellation
-- [ ] Verify Solution controller reconciles respect context
-- [ ] Add logging for shutdown progress
+- [x] Verify RemediationPolicy HTTP client respects context cancellation
+- [x] Verify Solution controller reconciles respect context
+- [x] Add logging for shutdown progress
 
 ### Milestone 4: Testing and Documentation
-- [ ] Unit tests for shutdown-aware health check
-- [ ] Integration test for graceful shutdown behavior
-- [ ] Update documentation with shutdown configuration options
+- [x] Unit tests for shutdown-aware health check
+- [x] Integration test for graceful shutdown behavior
+- [x] Update documentation with shutdown configuration options
+  - Note: No user-facing configuration needed - values are hardcoded per design decision (20m timeout, 1260s terminationGracePeriodSeconds in Helm chart)
 
 ## Risks & Mitigations
 
@@ -187,6 +186,11 @@ spec:
 | Date | Update |
 |------|--------|
 | 2025-12-01 | PRD created based on issue #16 discussion about rate limit persistence |
+| 2026-01-23 | Milestone 1 complete: Added `internal/shutdown` package with `Tracker`, `HealthChecker`, and `SetupSignalHandler`. Updated `cmd/main.go` to use shutdown-aware readiness probe. Unit tests passing. |
+| 2026-01-23 | Milestone 2 complete: Configured controller-runtime manager with 20-minute `GracefulShutdownTimeout`. Simplified from configurable flags to hardcoded value. |
+| 2026-01-23 | Milestone 3 complete: Verified HTTP client uses `http.NewRequestWithContext(ctx)`. Added context-aware sleep to retry loops in both controllers. Enhanced shutdown progress logging. Added unit tests for context cancellation behavior. |
+| 2026-01-23 | Milestone 4 (partial): Added integration tests for graceful shutdown in `internal/shutdown/shutdown_integration_test.go`. Tests cover: readiness endpoint behavior during shutdown, shutdown sequence ordering, in-flight operation draining, concurrent access safety, and response timing. |
+| 2026-01-23 | Milestone 4 complete: Updated Helm chart `terminationGracePeriodSeconds` from 10 to 1260 seconds (21 minutes) to allow graceful shutdown timeout to complete. PRD marked complete - all milestones finished. |
 
 ---
 

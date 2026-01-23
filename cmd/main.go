@@ -24,8 +24,11 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	"k8s.io/utils/ptr"
+
 	dotaiv1alpha1 "github.com/vfarcic/dot-ai-controller/api/v1alpha1"
 	"github.com/vfarcic/dot-ai-controller/internal/controller"
+	"github.com/vfarcic/dot-ai-controller/internal/shutdown"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -167,13 +170,18 @@ func main() {
 		})
 	}
 
+	// Graceful shutdown timeout allows in-flight operations to complete before exit.
+	// Set to 20 minutes to accommodate long-running MCP remediation operations.
+	gracefulShutdownTimeout := 20 * time.Minute
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "891bca92.remediation.devopstoolkit.live",
+		Scheme:                  scheme,
+		Metrics:                 metricsServerOptions,
+		WebhookServer:           webhookServer,
+		HealthProbeBindAddress:  probeAddr,
+		LeaderElection:          enableLeaderElection,
+		LeaderElectionID:        "891bca92.remediation.devopstoolkit.live",
+		GracefulShutdownTimeout: ptr.To(gracefulShutdownTimeout),
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -272,13 +280,24 @@ func main() {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+
+	// Create shutdown tracker for graceful shutdown handling
+	// The tracker marks the pod as not-ready immediately on SIGTERM,
+	// allowing Kubernetes to stop routing traffic while in-flight operations drain
+	shutdownTracker := shutdown.NewTracker()
+	shutdownChecker := shutdown.NewHealthChecker(shutdownTracker)
+
+	if err := mgr.AddReadyzCheck("readyz", shutdownChecker.Check); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	// Setup signal handler that marks shutdown state before cancelling context
+	// This allows readiness probe to fail immediately while manager drains
+	ctx := shutdown.SetupSignalHandler(shutdownTracker)
+
+	setupLog.Info("starting manager", "gracefulShutdownTimeout", gracefulShutdownTimeout)
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
