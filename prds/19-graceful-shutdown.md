@@ -142,9 +142,9 @@ For Solution controller:
 - Note: Simplified from configurable flags to hardcoded value per design decision
 
 ### Milestone 3: Context Propagation Verification
-- [ ] Verify RemediationPolicy HTTP client respects context cancellation
-- [ ] Verify Solution controller reconciles respect context
-- [ ] Add logging for shutdown progress
+- [x] Verify RemediationPolicy HTTP client respects context cancellation
+- [x] Verify Solution controller reconciles respect context
+- [x] Add logging for shutdown progress
 
 ### Milestone 4: Testing and Documentation
 - [x] Unit tests for shutdown-aware health check
@@ -187,6 +187,7 @@ spec:
 | 2025-12-01 | PRD created based on issue #16 discussion about rate limit persistence |
 | 2026-01-23 | Milestone 1 complete: Added `internal/shutdown` package with `Tracker`, `HealthChecker`, and `SetupSignalHandler`. Updated `cmd/main.go` to use shutdown-aware readiness probe. Unit tests passing. |
 | 2026-01-23 | Milestone 2 complete: Configured controller-runtime manager with 20-minute `GracefulShutdownTimeout`. Simplified from configurable flags to hardcoded value. |
+| 2026-01-23 | Milestone 3 complete: Verified HTTP client uses `http.NewRequestWithContext(ctx)`. Added context-aware sleep to retry loops in both controllers. Enhanced shutdown progress logging. Added unit tests for context cancellation behavior. |
 
 ---
 

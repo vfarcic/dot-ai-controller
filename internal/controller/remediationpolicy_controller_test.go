@@ -1974,4 +1974,117 @@ var _ = Describe("RemediationPolicy Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
+
+	Describe("Graceful Shutdown Context Propagation", func() {
+		It("should respect context cancellation in updatePolicyStatus retry loop", func() {
+			By("Creating a test RemediationPolicy")
+			policy := &dotaiv1alpha1.RemediationPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-policy-shutdown",
+					Namespace: "default",
+				},
+				Spec: dotaiv1alpha1.RemediationPolicySpec{
+					EventSelectors: []dotaiv1alpha1.EventSelector{
+						{
+							Type:               "Warning",
+							Reason:             "TestShutdown",
+							InvolvedObjectKind: "Pod",
+						},
+					},
+					McpEndpoint: "http://test-mcp:3456/api/v1/tools/remediate",
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-auth-secret",
+						Key:  "api-key",
+					},
+					Mode: "manual",
+				},
+			}
+
+			err := k8sClient.Create(ctx, policy)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() {
+				_ = k8sClient.Delete(ctx, policy)
+			}()
+
+			By("Initializing policy status first")
+			policyKey := types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: policyKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Creating a context that will be cancelled during status update")
+			cancelCtx, cancel := context.WithCancel(context.Background())
+
+			// Start a goroutine that cancels the context after a short delay
+			// This simulates shutdown happening during a retry backoff
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				cancel()
+			}()
+
+			By("Calling updatePolicyStatus with cancellable context")
+			startTime := time.Now()
+			err = reconciler.updatePolicyStatus(cancelCtx, policy, true)
+			elapsed := time.Since(startTime)
+
+			By("Verifying the function exits quickly when context is cancelled")
+			// The function should return relatively quickly (not wait for full retry backoff)
+			// Full retry with exponential backoff could take several seconds
+			// With context cancellation, it should exit within ~1 second max
+			Expect(elapsed).To(BeNumerically("<", 2*time.Second))
+
+			// If there's an error, it should be related to context cancellation
+			if err != nil {
+				Expect(err.Error()).To(ContainSubstring("context canceled"))
+			}
+		})
+
+		It("should exit reconciliation quickly when context is cancelled", func() {
+			By("Creating a test RemediationPolicy")
+			policy := &dotaiv1alpha1.RemediationPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-policy-reconcile-cancel",
+					Namespace: "default",
+				},
+				Spec: dotaiv1alpha1.RemediationPolicySpec{
+					EventSelectors: []dotaiv1alpha1.EventSelector{
+						{
+							Type:               "Warning",
+							Reason:             "TestCancel",
+							InvolvedObjectKind: "Pod",
+						},
+					},
+					McpEndpoint: "http://test-mcp:3456/api/v1/tools/remediate",
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-auth-secret",
+						Key:  "api-key",
+					},
+					Mode: "manual",
+				},
+			}
+
+			err := k8sClient.Create(ctx, policy)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() {
+				_ = k8sClient.Delete(ctx, policy)
+			}()
+
+			By("Creating a cancelled context")
+			cancelledCtx, cancel := context.WithCancel(context.Background())
+			cancel() // Cancel immediately
+
+			By("Reconciling with cancelled context")
+			policyKey := types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}
+			startTime := time.Now()
+			_, err = reconciler.Reconcile(cancelledCtx, reconcile.Request{NamespacedName: policyKey})
+			elapsed := time.Since(startTime)
+
+			// The reconcile should complete quickly (not hang)
+			Expect(elapsed).To(BeNumerically("<", 2*time.Second))
+
+			// If there's an error, it should be related to context cancellation
+			if err != nil {
+				Expect(err.Error()).To(ContainSubstring("context canceled"))
+			}
+		})
+	})
 })

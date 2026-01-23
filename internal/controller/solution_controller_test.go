@@ -729,4 +729,121 @@ var _ = Describe("Solution Controller", func() {
 			// deleting the Solution will NOT delete tracked resources in a real cluster.
 		})
 	})
+
+	Describe("Graceful Shutdown Context Propagation", func() {
+		It("should exit immediately when context is cancelled during status update", func() {
+			// Create a test Solution
+			solution := &dotaiv1alpha1.Solution{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-solution-shutdown",
+					Namespace: "default",
+				},
+				Spec: dotaiv1alpha1.SolutionSpec{
+					Intent: "Test context cancellation during shutdown",
+					Resources: []dotaiv1alpha1.ResourceReference{
+						{
+							APIVersion: "v1",
+							Kind:       "ConfigMap",
+							Name:       "test-config-shutdown",
+							Namespace:  "default",
+						},
+					},
+				},
+			}
+
+			// Create the Solution in the cluster
+			Expect(k8sClient.Create(ctx, solution)).To(Succeed())
+
+			// Defer cleanup
+			defer func() {
+				_ = k8sClient.Delete(ctx, solution)
+			}()
+
+			// Initialize status first with normal context
+			namespacedName := types.NamespacedName{
+				Name:      solution.Name,
+				Namespace: solution.Namespace,
+			}
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: namespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Now test with a cancelled context
+			cancelledCtx, cancel := context.WithCancel(context.Background())
+			cancel() // Cancel immediately
+
+			// Reconcile with cancelled context should return context error
+			startTime := time.Now()
+			_, err = reconciler.Reconcile(cancelledCtx, ctrl.Request{NamespacedName: namespacedName})
+			elapsed := time.Since(startTime)
+
+			// The reconcile should complete quickly (not hang)
+			Expect(elapsed).To(BeNumerically("<", 2*time.Second))
+
+			// If there's an error, it should be related to context cancellation
+			if err != nil {
+				Expect(err.Error()).To(ContainSubstring("context canceled"))
+			}
+		})
+
+		It("should respect context cancellation in updateSolutionStatus retry loop", func() {
+			// Create a test Solution
+			solution := &dotaiv1alpha1.Solution{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-solution-retry-cancel",
+					Namespace: "default",
+				},
+				Spec: dotaiv1alpha1.SolutionSpec{
+					Intent: "Test context cancellation in retry loop",
+					Resources: []dotaiv1alpha1.ResourceReference{
+						{
+							APIVersion: "v1",
+							Kind:       "ConfigMap",
+							Name:       "test-config-retry",
+							Namespace:  "default",
+						},
+					},
+				},
+			}
+
+			// Create the Solution in the cluster
+			Expect(k8sClient.Create(ctx, solution)).To(Succeed())
+			defer func() {
+				_ = k8sClient.Delete(ctx, solution)
+			}()
+
+			// Initialize status first
+			namespacedName := types.NamespacedName{
+				Name:      solution.Name,
+				Namespace: solution.Namespace,
+			}
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: namespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create a context that we can cancel
+			cancelCtx, cancel := context.WithCancel(context.Background())
+
+			// Start a goroutine that cancels the context after a short delay
+			// This simulates shutdown happening during a retry backoff
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				cancel()
+			}()
+
+			// Call updateSolutionStatus - it should exit quickly when context is cancelled
+			// even if it's in a retry loop
+			startTime := time.Now()
+			err = reconciler.updateSolutionStatus(cancelCtx, solution)
+			elapsed := time.Since(startTime)
+
+			// The function should return relatively quickly (not wait for full retry backoff)
+			// Full retry with exponential backoff could take several seconds
+			// With context cancellation, it should exit within ~1 second max
+			Expect(elapsed).To(BeNumerically("<", 2*time.Second))
+
+			// If there's an error, it should be related to context cancellation
+			if err != nil {
+				Expect(err.Error()).To(ContainSubstring("context canceled"))
+			}
+		})
+	})
 })

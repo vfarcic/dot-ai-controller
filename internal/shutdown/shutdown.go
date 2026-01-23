@@ -78,12 +78,18 @@ func SetupSignalHandler(tracker *Tracker) context.Context {
 
 	go func() {
 		sig := <-c
-		logger.Info("received shutdown signal, marking not ready", "signal", sig.String())
+		logger.Info("received shutdown signal, initiating graceful shutdown",
+			"signal", sig.String(),
+			"action", "marking pod not-ready and draining in-flight operations")
 		tracker.MarkShuttingDown()
+		logger.Info("shutdown state set, cancelling context to stop accepting new work")
 		cancel()
+		logger.Info("graceful shutdown in progress, waiting for in-flight operations to complete")
 
 		sig = <-c
-		logger.Info("received second signal, forcing exit", "signal", sig.String())
+		logger.Info("received second signal, forcing immediate exit",
+			"signal", sig.String(),
+			"warning", "in-flight operations may be abandoned")
 		os.Exit(1)
 	}()
 
