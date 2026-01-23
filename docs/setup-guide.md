@@ -58,6 +58,19 @@ This installs:
 - CapabilityScanConfig CRD
 - RBAC permissions
 
+### Configuration Reference
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `annotations` | Global annotations applied to all resources (e.g., `reloader.stakater.com/auto: "true"`) | `{}` |
+| `image.repository` | Container image repository | `ghcr.io/vfarcic/dot-ai-controller` |
+| `image.tag` | Container image tag | Chart appVersion |
+| `image.pullPolicy` | Image pull policy | `IfNotPresent` |
+| `resources.requests.memory` | Memory request | `128Mi` |
+| `resources.requests.cpu` | CPU request | `10m` |
+| `resources.limits.memory` | Memory limit | `512Mi` |
+| `resources.limits.cpu` | CPU limit | `500m` |
+
 ### Verify Installation
 
 ```bash

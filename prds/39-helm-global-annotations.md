@@ -105,5 +105,5 @@ This PRD follows the same pattern as the dot-ai MCP server Helm chart (PRD #336)
 - [x] Create helper function for annotations in `_helpers.tpl`
 - [x] Add `annotations: {}` to `values.yaml` with documentation comments
 - [x] Update all templates to include global annotations
-- [ ] Add unit tests for annotation rendering
-- [ ] Update chart documentation with examples
+- [~] Add unit tests for annotation rendering (deferred - no Helm test framework)
+- [x] Update chart documentation with examples
