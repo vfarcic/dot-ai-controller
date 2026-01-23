@@ -137,11 +137,9 @@ For Solution controller:
 - [x] Wire up SIGTERM handler to set shutdown state
 - [x] Verify readiness probe returns unhealthy during shutdown
 
-### Milestone 2: Configurable Graceful Shutdown
-- [ ] Add `--remediation-shutdown-timeout` flag (default 20m)
-- [ ] Add `--solution-shutdown-timeout` flag (default 2m)
-- [ ] Configure controller-runtime manager with appropriate timeout
-- [ ] Add shutdown timeout to Helm chart values
+### Milestone 2: Graceful Shutdown Timeout
+- [x] Configure controller-runtime manager with 20-minute graceful shutdown timeout
+- Note: Simplified from configurable flags to hardcoded value per design decision
 
 ### Milestone 3: Context Propagation Verification
 - [ ] Verify RemediationPolicy HTTP client respects context cancellation
@@ -188,6 +186,7 @@ spec:
 |------|--------|
 | 2025-12-01 | PRD created based on issue #16 discussion about rate limit persistence |
 | 2026-01-23 | Milestone 1 complete: Added `internal/shutdown` package with `Tracker`, `HealthChecker`, and `SetupSignalHandler`. Updated `cmd/main.go` to use shutdown-aware readiness probe. Unit tests passing. |
+| 2026-01-23 | Milestone 2 complete: Configured controller-runtime manager with 20-minute `GracefulShutdownTimeout`. Simplified from configurable flags to hardcoded value. |
 
 ---
 
