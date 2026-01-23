@@ -1,7 +1,8 @@
 # PRD: Global Annotations Support in Helm Chart
 
 **Issue**: [#39](https://github.com/vfarcic/dot-ai-controller/issues/39)
-**Status**: In Progress
+**Status**: Complete
+**Completed**: 2026-01-23
 **Priority**: Low
 **Created**: 2026-01-21
 
