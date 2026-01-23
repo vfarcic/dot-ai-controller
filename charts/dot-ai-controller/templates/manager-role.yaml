@@ -4,11 +4,6 @@ kind: ClusterRole
 metadata:
   labels:
     {{- include "dot-ai-controller.labels" . | nindent 4 }}
-  {{- $annotations := include "dot-ai-controller.annotations" (dict "global" .Values.annotations "local" nil) -}}
-  {{- if $annotations }}
-  annotations:
-    {{- $annotations | nindent 4 }}
-  {{- end }}
   name: {{ include "dot-ai-controller.clusterRoleName" . }}
 rules:
 - apiGroups:
