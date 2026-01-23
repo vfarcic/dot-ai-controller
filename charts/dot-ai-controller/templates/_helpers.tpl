@@ -70,3 +70,17 @@ Create the name of the cluster role binding to use
 {{- define "dot-ai-controller.clusterRoleBindingName" -}}
 {{- printf "%s-manager-rolebinding" (include "dot-ai-controller.fullname" .) }}
 {{- end }}
+
+{{/*
+Merge global annotations with resource-specific annotations.
+Resource-specific annotations take precedence over global annotations.
+Usage: include "dot-ai-controller.annotations" (dict "global" .Values.annotations "local" .Values.ingress.annotations)
+*/}}
+{{- define "dot-ai-controller.annotations" -}}
+{{- $global := .global | default dict -}}
+{{- $local := .local | default dict -}}
+{{- $merged := merge $local $global -}}
+{{- if $merged -}}
+{{- toYaml $merged -}}
+{{- end -}}
+{{- end -}}

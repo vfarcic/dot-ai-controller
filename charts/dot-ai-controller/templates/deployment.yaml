@@ -7,6 +7,11 @@ metadata:
   labels:
     {{- include "dot-ai-controller.labels" . | nindent 4 }}
     control-plane: controller-manager
+  {{- $annotations := include "dot-ai-controller.annotations" (dict "global" .Values.annotations "local" nil) -}}
+  {{- if $annotations }}
+  annotations:
+    {{- $annotations | nindent 4 }}
+  {{- end }}
 spec:
   replicas: 1
   selector:
@@ -15,8 +20,11 @@ spec:
       control-plane: controller-manager
   template:
     metadata:
+      {{- $podAnnotations := include "dot-ai-controller.annotations" (dict "global" .Values.annotations "local" (dict "kubectl.kubernetes.io/default-container" "manager")) -}}
+      {{- if $podAnnotations }}
       annotations:
-        kubectl.kubernetes.io/default-container: manager
+        {{- $podAnnotations | nindent 8 }}
+      {{- end }}
       labels:
         {{- include "dot-ai-controller.selectorLabels" . | nindent 8 }}
         control-plane: controller-manager
