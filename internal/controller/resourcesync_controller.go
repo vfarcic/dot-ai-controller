@@ -110,6 +110,17 @@ const (
 
 	// clusterScopeNamespace is used in resource IDs for cluster-scoped resources
 	clusterScopeNamespace = "_cluster"
+
+	// maxSyncErrorsCount caps the SyncErrors counter to prevent unbounded growth
+	// that could cause status updates to exceed etcd size limits
+	maxSyncErrorsCount = 100000
+
+	// maxLastErrorLength limits the LastError string to prevent status bloat
+	maxLastErrorLength = 1024
+
+	// statusUpdateBackoffDuration is the backoff duration when status updates
+	// fail repeatedly due to size limits or other persistent errors
+	statusUpdateBackoffDuration = 5 * time.Minute
 )
 
 var (
@@ -120,6 +131,63 @@ var (
 		Resource: "customresourcedefinitions",
 	}
 )
+
+// isEntityTooLargeError checks if an error is due to etcd object size limits
+func isEntityTooLargeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "Request entity too large") ||
+		(strings.Contains(errStr, "etcd") && strings.Contains(errStr, "too large"))
+}
+
+// sanitizeStatus ensures the status fits within reasonable size limits
+// to prevent etcd "entity too large" errors
+func sanitizeStatus(status *dotaiv1alpha1.ResourceSyncConfigStatus) {
+	// Cap SyncErrors counter
+	if status.SyncErrors > maxSyncErrorsCount {
+		status.SyncErrors = maxSyncErrorsCount
+	}
+
+	// Truncate LastError string if too long
+	if len(status.LastError) > maxLastErrorLength {
+		status.LastError = status.LastError[:maxLastErrorLength-3] + "..."
+	}
+
+	// Keep only the Ready condition to prevent condition array growth
+	if len(status.Conditions) > 1 {
+		var readyCondition *metav1.Condition
+		for i := range status.Conditions {
+			if status.Conditions[i].Type == "Ready" {
+				readyCondition = &status.Conditions[i]
+				break
+			}
+		}
+		if readyCondition != nil {
+			status.Conditions = []metav1.Condition{*readyCondition}
+		} else if len(status.Conditions) > 0 {
+			// No Ready condition found, keep only the first one
+			status.Conditions = status.Conditions[:1]
+		}
+	}
+}
+
+// truncateErrorMessage truncates an error message to maxLastErrorLength
+func truncateErrorMessage(msg string) string {
+	if len(msg) > maxLastErrorLength {
+		return msg[:maxLastErrorLength-3] + "..."
+	}
+	return msg
+}
+
+// incrementSyncErrors increments the error count, capping at maxSyncErrorsCount
+func incrementSyncErrors(current int64) int64 {
+	if current >= maxSyncErrorsCount {
+		return maxSyncErrorsCount
+	}
+	return current + 1
+}
 
 // ResourceSyncReconciler reconciles ResourceSyncConfig objects and manages
 // dynamic resource watching based on their configuration
@@ -162,6 +230,14 @@ type activeConfigState struct {
 	debounceBuffer *DebounceBuffer
 	// mcpClient handles communication with the MCP endpoint
 	mcpClient *MCPResourceSyncClient
+
+	// statusUpdateFailures tracks consecutive status update failures
+	// Used to apply backoff when updates repeatedly fail (e.g., entity too large)
+	statusUpdateFailures int
+	// lastStatusUpdateFailure records when the last failure occurred
+	// Used with statusUpdateBackoffDuration to determine if we should skip updates
+	lastStatusUpdateFailure time.Time
+	statusUpdateMu          sync.Mutex
 }
 
 // configKey returns a unique key for a ResourceSyncConfig (namespace/name)
@@ -211,7 +287,7 @@ func (r *ResourceSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Initialize clients if not already done
 	if err := r.ensureClients(); err != nil {
 		logger.Error(err, "Failed to initialize clients")
-		r.updateStatus(ctx, &config, false, 0, err.Error(), time.Time{})
+		r.updateStatus(ctx, &config, nil, false, 0, err.Error(), time.Time{})
 		return ctrl.Result{}, err
 	}
 
@@ -238,12 +314,12 @@ func (r *ResourceSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				metrics := existingState.debounceBuffer.GetMetrics()
 				lastFlushTime = metrics.LastFlushTime
 				if metrics.LastError != "" {
-					lastError = metrics.LastError
+					lastError = truncateErrorMessage(metrics.LastError)
 					// Increment sync errors when we detect an error from debounce buffer
-					r.updateSyncErrorCount(ctx, &config)
+					r.updateSyncErrorCount(ctx, &config, existingState)
 				}
 			}
-			r.updateStatus(ctx, &config, true, watchedCount, lastError, lastFlushTime)
+			r.updateStatus(ctx, &config, existingState, true, watchedCount, lastError, lastFlushTime)
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 	}
@@ -251,7 +327,7 @@ func (r *ResourceSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Start a new watcher for this config
 	if err := r.startWatcher(ctx, &config); err != nil {
 		logger.Error(err, "Failed to start resource watcher")
-		r.updateStatus(ctx, &config, false, 0, err.Error(), time.Time{})
+		r.updateStatus(ctx, &config, nil, false, 0, err.Error(), time.Time{})
 		r.Recorder.Eventf(&config, corev1.EventTypeWarning, "WatcherFailed",
 			"Failed to start resource watcher: %v", err)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -418,7 +494,7 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 	state.informersMu.RLock()
 	watchedCount := len(state.activeInformers)
 	state.informersMu.RUnlock()
-	r.updateStatus(ctx, config, true, watchedCount, "", time.Time{})
+	r.updateStatus(ctx, config, state, true, watchedCount, "", time.Time{})
 
 	return nil
 }
@@ -966,8 +1042,21 @@ func (r *ResourceSyncReconciler) makeOnDelete(state *activeConfigState) func(obj
 }
 
 // updateSyncErrorCount increments the sync error count for a ResourceSyncConfig
-func (r *ResourceSyncReconciler) updateSyncErrorCount(ctx context.Context, config *dotaiv1alpha1.ResourceSyncConfig) {
+func (r *ResourceSyncReconciler) updateSyncErrorCount(ctx context.Context, config *dotaiv1alpha1.ResourceSyncConfig, state *activeConfigState) {
 	logger := logf.FromContext(ctx)
+
+	// Check if we're in backoff mode due to previous status update failures
+	if state != nil {
+		state.statusUpdateMu.Lock()
+		if state.statusUpdateFailures > 0 && time.Since(state.lastStatusUpdateFailure) < statusUpdateBackoffDuration {
+			state.statusUpdateMu.Unlock()
+			logger.V(1).Info("Skipping sync error count update due to backoff",
+				"failures", state.statusUpdateFailures,
+				"backoffRemaining", statusUpdateBackoffDuration-time.Since(state.lastStatusUpdateFailure))
+			return
+		}
+		state.statusUpdateMu.Unlock()
+	}
 
 	// Fetch fresh copy to avoid conflicts
 	fresh := &dotaiv1alpha1.ResourceSyncConfig{}
@@ -976,19 +1065,59 @@ func (r *ResourceSyncReconciler) updateSyncErrorCount(ctx context.Context, confi
 		return
 	}
 
-	fresh.Status.SyncErrors++
+	// Increment with cap to prevent unbounded growth
+	fresh.Status.SyncErrors = incrementSyncErrors(fresh.Status.SyncErrors)
+
+	// Sanitize status before update to prevent entity too large errors
+	sanitizeStatus(&fresh.Status)
+
 	if err := r.Status().Update(ctx, fresh); err != nil {
 		if apierrors.IsConflict(err) {
 			logger.V(1).Info("Conflict updating sync error count, will retry on next reconcile")
 			return
 		}
-		logger.V(1).Info("Failed to update sync error count", "error", err)
+
+		// Track failure for backoff
+		if state != nil {
+			state.statusUpdateMu.Lock()
+			state.statusUpdateFailures++
+			state.lastStatusUpdateFailure = time.Now()
+			state.statusUpdateMu.Unlock()
+		}
+
+		if isEntityTooLargeError(err) {
+			logger.Error(err, "Status update failed due to entity size limit, entering backoff mode")
+		} else {
+			logger.V(1).Info("Failed to update sync error count", "error", err)
+		}
+		return
+	}
+
+	// Success - reset failure tracking
+	if state != nil {
+		state.statusUpdateMu.Lock()
+		state.statusUpdateFailures = 0
+		state.statusUpdateMu.Unlock()
 	}
 }
 
 // updateStatus updates the ResourceSyncConfig status
-func (r *ResourceSyncReconciler) updateStatus(ctx context.Context, config *dotaiv1alpha1.ResourceSyncConfig, active bool, watchedTypes int, lastError string, lastFlushTime time.Time) {
+// state can be nil when no active watcher exists
+func (r *ResourceSyncReconciler) updateStatus(ctx context.Context, config *dotaiv1alpha1.ResourceSyncConfig, state *activeConfigState, active bool, watchedTypes int, lastError string, lastFlushTime time.Time) {
 	logger := logf.FromContext(ctx)
+
+	// Check if we're in backoff mode due to previous status update failures
+	if state != nil {
+		state.statusUpdateMu.Lock()
+		if state.statusUpdateFailures > 0 && time.Since(state.lastStatusUpdateFailure) < statusUpdateBackoffDuration {
+			state.statusUpdateMu.Unlock()
+			logger.V(1).Info("Skipping status update due to backoff",
+				"failures", state.statusUpdateFailures,
+				"backoffRemaining", statusUpdateBackoffDuration-time.Since(state.lastStatusUpdateFailure))
+			return
+		}
+		state.statusUpdateMu.Unlock()
+	}
 
 	// Fetch fresh copy to avoid conflicts
 	fresh := &dotaiv1alpha1.ResourceSyncConfig{}
@@ -1000,7 +1129,7 @@ func (r *ResourceSyncReconciler) updateStatus(ctx context.Context, config *dotai
 	// Update status fields
 	fresh.Status.Active = active
 	fresh.Status.WatchedResourceTypes = watchedTypes
-	fresh.Status.LastError = lastError
+	fresh.Status.LastError = truncateErrorMessage(lastError)
 
 	// Update LastSyncTime from debounce buffer's lastFlushTime if it's more recent
 	if !lastFlushTime.IsZero() {
@@ -1013,6 +1142,12 @@ func (r *ResourceSyncReconciler) updateStatus(ctx context.Context, config *dotai
 	// Update Ready condition
 	now := metav1.NewTime(time.Now())
 	var readyCondition metav1.Condition
+
+	// Truncate condition message if needed
+	conditionMessage := lastError
+	if len(conditionMessage) > maxLastErrorLength {
+		conditionMessage = conditionMessage[:maxLastErrorLength-3] + "..."
+	}
 
 	if active {
 		readyCondition = metav1.Condition{
@@ -1027,7 +1162,7 @@ func (r *ResourceSyncReconciler) updateStatus(ctx context.Context, config *dotai
 		message := "Resource watcher is not running"
 		if lastError != "" {
 			reason = "WatcherError"
-			message = lastError
+			message = conditionMessage
 		}
 		readyCondition = metav1.Condition{
 			Type:               "Ready",
@@ -1051,9 +1186,32 @@ func (r *ResourceSyncReconciler) updateStatus(ctx context.Context, config *dotai
 		fresh.Status.Conditions = append(fresh.Status.Conditions, readyCondition)
 	}
 
+	// Sanitize status before update to prevent entity too large errors
+	sanitizeStatus(&fresh.Status)
+
 	// Update status subresource
 	if err := r.Status().Update(ctx, fresh); err != nil {
-		logger.Error(err, "Failed to update ResourceSyncConfig status")
+		// Track failure for backoff
+		if state != nil {
+			state.statusUpdateMu.Lock()
+			state.statusUpdateFailures++
+			state.lastStatusUpdateFailure = time.Now()
+			state.statusUpdateMu.Unlock()
+		}
+
+		if isEntityTooLargeError(err) {
+			logger.Error(err, "Status update failed due to entity size limit, entering backoff mode")
+		} else {
+			logger.Error(err, "Failed to update ResourceSyncConfig status")
+		}
+		return
+	}
+
+	// Success - reset failure tracking
+	if state != nil {
+		state.statusUpdateMu.Lock()
+		state.statusUpdateFailures = 0
+		state.statusUpdateMu.Unlock()
 	}
 }
 
@@ -1176,6 +1334,16 @@ func (r *ResourceSyncReconciler) performInitialSync(ctx context.Context, state *
 		return
 	}
 
+	// Check if we're in backoff mode
+	state.statusUpdateMu.Lock()
+	if state.statusUpdateFailures > 0 && time.Since(state.lastStatusUpdateFailure) < statusUpdateBackoffDuration {
+		state.statusUpdateMu.Unlock()
+		logger.V(1).Info("Skipping initial sync status update due to backoff",
+			"failures", state.statusUpdateFailures)
+		return
+	}
+	state.statusUpdateMu.Unlock()
+
 	// Fetch fresh config for status update
 	configNamespace, configNameOnly := parseConfigKey(configName)
 	var config dotaiv1alpha1.ResourceSyncConfig
@@ -1189,8 +1357,9 @@ func (r *ResourceSyncReconciler) performInitialSync(ctx context.Context, state *
 	config.Status.LastSyncTime = &now
 
 	if err != nil {
-		config.Status.SyncErrors++
-		config.Status.LastError = err.Error()
+		// Use capped increment and truncated error message
+		config.Status.SyncErrors = incrementSyncErrors(config.Status.SyncErrors)
+		config.Status.LastError = truncateErrorMessage(err.Error())
 		logger.Error(err, "Initial sync failed", "config", configName)
 	} else {
 		config.Status.LastError = ""
@@ -1199,9 +1368,28 @@ func (r *ResourceSyncReconciler) performInitialSync(ctx context.Context, state *
 		logger.Info("Initial sync completed", "config", configName, "resourceCount", resourceCount)
 	}
 
+	// Sanitize status before update
+	sanitizeStatus(&config.Status)
+
 	if statusErr := r.Status().Update(ctx, &config); statusErr != nil {
-		logger.Error(statusErr, "Failed to update status after initial sync")
+		// Track failure for backoff
+		state.statusUpdateMu.Lock()
+		state.statusUpdateFailures++
+		state.lastStatusUpdateFailure = time.Now()
+		state.statusUpdateMu.Unlock()
+
+		if isEntityTooLargeError(statusErr) {
+			logger.Error(statusErr, "Initial sync status update failed due to entity size limit, entering backoff mode")
+		} else {
+			logger.Error(statusErr, "Failed to update status after initial sync")
+		}
+		return
 	}
+
+	// Success - reset failure tracking
+	state.statusUpdateMu.Lock()
+	state.statusUpdateFailures = 0
+	state.statusUpdateMu.Unlock()
 }
 
 // periodicResyncLoop runs periodic resyncs at the configured interval
@@ -1233,6 +1421,16 @@ func (r *ResourceSyncReconciler) periodicResyncLoop(ctx context.Context, state *
 				return
 			}
 
+			// Check if we're in backoff mode
+			state.statusUpdateMu.Lock()
+			if state.statusUpdateFailures > 0 && time.Since(state.lastStatusUpdateFailure) < statusUpdateBackoffDuration {
+				state.statusUpdateMu.Unlock()
+				logger.V(1).Info("Skipping periodic resync status update due to backoff",
+					"failures", state.statusUpdateFailures)
+				continue
+			}
+			state.statusUpdateMu.Unlock()
+
 			logger.Info("Starting periodic resync", "config", configName)
 
 			resourceCount, err := r.performResync(ctx, state)
@@ -1250,8 +1448,9 @@ func (r *ResourceSyncReconciler) periodicResyncLoop(ctx context.Context, state *
 			config.Status.LastSyncTime = &now
 
 			if err != nil {
-				config.Status.SyncErrors++
-				config.Status.LastError = err.Error()
+				// Use capped increment and truncated error message
+				config.Status.SyncErrors = incrementSyncErrors(config.Status.SyncErrors)
+				config.Status.LastError = truncateErrorMessage(err.Error())
 				logger.Error(err, "Periodic resync failed", "config", configName)
 			} else {
 				config.Status.LastError = ""
@@ -1260,9 +1459,28 @@ func (r *ResourceSyncReconciler) periodicResyncLoop(ctx context.Context, state *
 				logger.Info("Periodic resync completed", "config", configName, "resourceCount", resourceCount)
 			}
 
+			// Sanitize status before update
+			sanitizeStatus(&config.Status)
+
 			if statusErr := r.Status().Update(ctx, &config); statusErr != nil {
-				logger.Error(statusErr, "Failed to update status after periodic resync")
+				// Track failure for backoff
+				state.statusUpdateMu.Lock()
+				state.statusUpdateFailures++
+				state.lastStatusUpdateFailure = time.Now()
+				state.statusUpdateMu.Unlock()
+
+				if isEntityTooLargeError(statusErr) {
+					logger.Error(statusErr, "Periodic resync status update failed due to entity size limit, entering backoff mode")
+				} else {
+					logger.Error(statusErr, "Failed to update status after periodic resync")
+				}
+				continue
 			}
+
+			// Success - reset failure tracking
+			state.statusUpdateMu.Lock()
+			state.statusUpdateFailures = 0
+			state.statusUpdateMu.Unlock()
 		}
 	}
 }

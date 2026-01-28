@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -1898,6 +1899,209 @@ var _ = Describe("ResourceSync Controller", func() {
 				count, err := reconciler.performResync(testCtx, state)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(count).To(Equal(0))
+			})
+		})
+	})
+
+	Describe("Status Size Limit Functions", func() {
+		Describe("isEntityTooLargeError", func() {
+			It("should detect 'Request entity too large' error", func() {
+				err := fmt.Errorf("Request entity too large: limit is 3145728")
+				Expect(isEntityTooLargeError(err)).To(BeTrue())
+			})
+
+			It("should detect etcd 'too large' error", func() {
+				err := fmt.Errorf("etcd cluster: object is too large")
+				Expect(isEntityTooLargeError(err)).To(BeTrue())
+			})
+
+			It("should return false for nil error", func() {
+				Expect(isEntityTooLargeError(nil)).To(BeFalse())
+			})
+
+			It("should return false for unrelated error", func() {
+				err := fmt.Errorf("connection refused")
+				Expect(isEntityTooLargeError(err)).To(BeFalse())
+			})
+
+			It("should return false for error containing only 'too large' without etcd", func() {
+				err := fmt.Errorf("file is too large")
+				Expect(isEntityTooLargeError(err)).To(BeFalse())
+			})
+		})
+
+		Describe("sanitizeStatus", func() {
+			It("should cap SyncErrors at maxSyncErrorsCount", func() {
+				status := &dotaiv1alpha1.ResourceSyncConfigStatus{
+					SyncErrors: maxSyncErrorsCount + 1000,
+				}
+				sanitizeStatus(status)
+				Expect(status.SyncErrors).To(Equal(int64(maxSyncErrorsCount)))
+			})
+
+			It("should not modify SyncErrors below max", func() {
+				status := &dotaiv1alpha1.ResourceSyncConfigStatus{
+					SyncErrors: 50,
+				}
+				sanitizeStatus(status)
+				Expect(status.SyncErrors).To(Equal(int64(50)))
+			})
+
+			It("should truncate LastError longer than maxLastErrorLength", func() {
+				longError := make([]byte, maxLastErrorLength+100)
+				for i := range longError {
+					longError[i] = 'x'
+				}
+				status := &dotaiv1alpha1.ResourceSyncConfigStatus{
+					LastError: string(longError),
+				}
+				sanitizeStatus(status)
+				Expect(len(status.LastError)).To(Equal(maxLastErrorLength))
+				Expect(status.LastError).To(HaveSuffix("..."))
+			})
+
+			It("should not truncate LastError within limit", func() {
+				status := &dotaiv1alpha1.ResourceSyncConfigStatus{
+					LastError: "short error",
+				}
+				sanitizeStatus(status)
+				Expect(status.LastError).To(Equal("short error"))
+			})
+
+			It("should reduce conditions array to single Ready condition", func() {
+				status := &dotaiv1alpha1.ResourceSyncConfigStatus{
+					Conditions: []metav1.Condition{
+						{Type: "Other", Status: metav1.ConditionTrue},
+						{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Active"},
+						{Type: "Another", Status: metav1.ConditionFalse},
+					},
+				}
+				sanitizeStatus(status)
+				Expect(status.Conditions).To(HaveLen(1))
+				Expect(status.Conditions[0].Type).To(Equal("Ready"))
+			})
+
+			It("should keep single condition when only one exists", func() {
+				status := &dotaiv1alpha1.ResourceSyncConfigStatus{
+					Conditions: []metav1.Condition{
+						{Type: "Ready", Status: metav1.ConditionTrue},
+					},
+				}
+				sanitizeStatus(status)
+				Expect(status.Conditions).To(HaveLen(1))
+			})
+
+			It("should handle empty conditions array", func() {
+				status := &dotaiv1alpha1.ResourceSyncConfigStatus{
+					Conditions: []metav1.Condition{},
+				}
+				sanitizeStatus(status)
+				Expect(status.Conditions).To(BeEmpty())
+			})
+
+			It("should keep first condition if no Ready condition exists", func() {
+				status := &dotaiv1alpha1.ResourceSyncConfigStatus{
+					Conditions: []metav1.Condition{
+						{Type: "Other", Status: metav1.ConditionTrue},
+						{Type: "Another", Status: metav1.ConditionFalse},
+					},
+				}
+				sanitizeStatus(status)
+				Expect(status.Conditions).To(HaveLen(1))
+				Expect(status.Conditions[0].Type).To(Equal("Other"))
+			})
+		})
+
+		Describe("truncateErrorMessage", func() {
+			It("should return message unchanged if within limit", func() {
+				msg := "short error message"
+				Expect(truncateErrorMessage(msg)).To(Equal(msg))
+			})
+
+			It("should truncate and add ellipsis for long messages", func() {
+				longMsg := make([]byte, maxLastErrorLength+100)
+				for i := range longMsg {
+					longMsg[i] = 'e'
+				}
+				result := truncateErrorMessage(string(longMsg))
+				Expect(len(result)).To(Equal(maxLastErrorLength))
+				Expect(result).To(HaveSuffix("..."))
+			})
+
+			It("should handle empty string", func() {
+				Expect(truncateErrorMessage("")).To(Equal(""))
+			})
+
+			It("should handle exactly max length string", func() {
+				exactMsg := make([]byte, maxLastErrorLength)
+				for i := range exactMsg {
+					exactMsg[i] = 'x'
+				}
+				result := truncateErrorMessage(string(exactMsg))
+				Expect(result).To(Equal(string(exactMsg)))
+			})
+		})
+
+		Describe("incrementSyncErrors", func() {
+			It("should increment count below max", func() {
+				Expect(incrementSyncErrors(0)).To(Equal(int64(1)))
+				Expect(incrementSyncErrors(100)).To(Equal(int64(101)))
+				Expect(incrementSyncErrors(99999)).To(Equal(int64(100000)))
+			})
+
+			It("should cap at maxSyncErrorsCount", func() {
+				Expect(incrementSyncErrors(maxSyncErrorsCount)).To(Equal(int64(maxSyncErrorsCount)))
+				Expect(incrementSyncErrors(maxSyncErrorsCount + 1)).To(Equal(int64(maxSyncErrorsCount)))
+			})
+		})
+
+		Describe("backoff behavior", func() {
+			It("should track status update failures in activeConfigState", func() {
+				state := &activeConfigState{}
+
+				// Simulate failures
+				state.statusUpdateMu.Lock()
+				state.statusUpdateFailures = 3
+				state.lastStatusUpdateFailure = time.Now()
+				state.statusUpdateMu.Unlock()
+
+				// Verify tracking
+				state.statusUpdateMu.Lock()
+				failures := state.statusUpdateFailures
+				lastFailure := state.lastStatusUpdateFailure
+				state.statusUpdateMu.Unlock()
+
+				Expect(failures).To(Equal(3))
+				Expect(lastFailure).To(BeTemporally("~", time.Now(), time.Second))
+			})
+
+			It("should check backoff duration correctly", func() {
+				state := &activeConfigState{}
+
+				// Set failure in the past (outside backoff window)
+				state.statusUpdateMu.Lock()
+				state.statusUpdateFailures = 3
+				state.lastStatusUpdateFailure = time.Now().Add(-statusUpdateBackoffDuration - time.Minute)
+				state.statusUpdateMu.Unlock()
+
+				// Should be outside backoff window
+				state.statusUpdateMu.Lock()
+				shouldSkip := state.statusUpdateFailures > 0 && time.Since(state.lastStatusUpdateFailure) < statusUpdateBackoffDuration
+				state.statusUpdateMu.Unlock()
+
+				Expect(shouldSkip).To(BeFalse())
+
+				// Set failure recently (inside backoff window)
+				state.statusUpdateMu.Lock()
+				state.lastStatusUpdateFailure = time.Now()
+				state.statusUpdateMu.Unlock()
+
+				// Should be inside backoff window
+				state.statusUpdateMu.Lock()
+				shouldSkip = state.statusUpdateFailures > 0 && time.Since(state.lastStatusUpdateFailure) < statusUpdateBackoffDuration
+				state.statusUpdateMu.Unlock()
+
+				Expect(shouldSkip).To(BeTrue())
 			})
 		})
 	})
