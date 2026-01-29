@@ -39,6 +39,7 @@ jobs:
       with:
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
+        submodules: true
 
     - name: Determine version and mode
       id: config
