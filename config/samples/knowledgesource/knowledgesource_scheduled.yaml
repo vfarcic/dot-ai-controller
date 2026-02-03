@@ -1,0 +1,26 @@
+# KnowledgeSource with scheduled sync and file size limit
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: KnowledgeSource
+metadata:
+  name: api-docs
+spec:
+  repository:
+    url: https://github.com/acme/api-service.git
+    branch: main
+    depth: 1
+    secretRef:
+      name: github-credentials
+      key: token
+  paths:
+    - "docs/**/*.md"
+    - "api/**/*.yaml"
+  schedule: "0 */6 * * *"  # Every 6 hours
+  mcpServer:
+    url: http://mcp-server.dot-ai.svc:3456
+    authSecretRef:
+      name: mcp-auth
+      key: token
+  metadata:
+    source: "api-docs"
+    team: "platform"
+  maxFileSizeBytes: 1048576  # 1MB limit

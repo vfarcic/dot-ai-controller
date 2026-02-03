@@ -12,4 +12,8 @@ resources:
 # Solution samples (in subdirectory)
 - solution/solution_simple_resources.yaml
 - solution/solution_simple.yaml
+# KnowledgeSource samples (in subdirectory)
+- knowledgesource/knowledgesource_secrets.yaml
+- knowledgesource/knowledgesource_basic.yaml
+- knowledgesource/knowledgesource_scheduled.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

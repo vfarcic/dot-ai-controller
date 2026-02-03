@@ -132,7 +132,7 @@ status:
 
 ## Milestones
 
-- [ ] **M1: CRD Definition** - KnowledgeSource types with spec/status, code generation, sample CR
+- [x] **M1: CRD Definition** - KnowledgeSource types with spec/status, code generation, sample CR
 - [ ] **M2: Git Operations** - Clone/pull with go-git, HTTPS auth, file pattern matching
 - [ ] **M3: Change Detection** - Hash computation, ConfigMap state persistence, diff algorithm
 - [ ] **M4: MCP Integration** - Client with retry logic, ingest/delete operations, URI construction
