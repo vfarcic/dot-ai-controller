@@ -1,0 +1,19 @@
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: GitKnowledgeSource
+metadata:
+  name: controller-docs
+  namespace: dot-ai
+spec:
+  repository:
+    url: https://github.com/vfarcic/dot-ai-controller.git
+    branch: main
+  paths:
+    - "docs/**/*.md"
+    - "README.md"
+  mcpServer:
+    url: http://dot-ai.dot-ai.svc:3456
+    authSecretRef:
+      name: dot-ai-secrets
+      key: auth-token
+  metadata:
+    source: "dot-ai-controller"
