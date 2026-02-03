@@ -21,8 +21,10 @@ type GitKnowledgeSourceSpec struct {
 	// +optional
 	Exclude []string `json:"exclude,omitempty"`
 
-	// Schedule specifies when to sync in cron format
-	// Example: "0 */6 * * *" (every 6 hours)
+	// Schedule specifies when to sync using cron syntax or interval format
+	// Supports standard cron (e.g., "0 3 * * *") or intervals (e.g., "@every 24h")
+	// Default: "@every 24h" (once per day, staggered based on CR creation time)
+	// +kubebuilder:default:="@every 24h"
 	// +optional
 	Schedule string `json:"schedule,omitempty"`
 
@@ -53,7 +55,8 @@ type RepositoryConfig struct {
 	// +optional
 	Branch string `json:"branch,omitempty"`
 
-	// Depth is the shallow clone depth
+	// Depth is the shallow clone depth for the initial sync
+	// Subsequent syncs use --shallow-since to fetch only recent commits
 	// +kubebuilder:default:=1
 	// +kubebuilder:validation:Minimum=1
 	// +optional

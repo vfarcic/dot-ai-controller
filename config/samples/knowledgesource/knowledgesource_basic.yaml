@@ -1,6 +1,7 @@
-# Basic KnowledgeSource example - sync markdown docs from a public repo
+# Basic GitKnowledgeSource example - sync markdown docs from a public repo
+# Uses default schedule (@every 24h) - syncs once per day
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
-kind: KnowledgeSource
+kind: GitKnowledgeSource
 metadata:
   name: platform-docs
 spec:

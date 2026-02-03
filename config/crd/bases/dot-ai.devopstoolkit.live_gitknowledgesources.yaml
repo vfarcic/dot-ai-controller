@@ -131,7 +131,9 @@ spec:
                     type: string
                   depth:
                     default: 1
-                    description: Depth is the shallow clone depth
+                    description: |-
+                      Depth is the shallow clone depth for the initial sync
+                      Subsequent syncs use --shallow-since to fetch only recent commits
                     minimum: 1
                     type: integer
                   secretRef:
@@ -160,9 +162,11 @@ spec:
                 - url
                 type: object
               schedule:
+                default: '@every 24h'
                 description: |-
-                  Schedule specifies when to sync in cron format
-                  Example: "0 */6 * * *" (every 6 hours)
+                  Schedule specifies when to sync using cron syntax or interval format
+                  Supports standard cron (e.g., "0 3 * * *") or intervals (e.g., "@every 24h")
+                  Default: "@every 24h" (once per day, staggered based on CR creation time)
                 type: string
             required:
             - mcpServer
