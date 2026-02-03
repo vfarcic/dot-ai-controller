@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: knowledgesources.dot-ai.devopstoolkit.live
+  name: gitknowledgesources.dot-ai.devopstoolkit.live
 spec:
   group: dot-ai.devopstoolkit.live
   names:
-    kind: KnowledgeSource
-    listKind: KnowledgeSourceList
-    plural: knowledgesources
+    kind: GitKnowledgeSource
+    listKind: GitKnowledgeSourceList
+    plural: gitknowledgesources
     shortNames:
-    - ks
-    singular: knowledgesource
+    - gks
+    singular: gitknowledgesource
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -41,8 +41,9 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          KnowledgeSource is the Schema for the knowledgesources API
+          GitKnowledgeSource is the Schema for the gitknowledgesources API
           It defines a Git repository to sync documents from into the MCP knowledge base
+          Works with any Git provider: GitHub, GitLab, Bitbucket, Gitea, self-hosted
         properties:
           apiVersion:
             description: |-
@@ -62,7 +63,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: KnowledgeSourceSpec defines the desired state of KnowledgeSource
+            description: GitKnowledgeSourceSpec defines the desired state of GitKnowledgeSource
             properties:
               exclude:
                 description: |-
@@ -169,7 +170,7 @@ spec:
             - repository
             type: object
           status:
-            description: KnowledgeSourceStatus defines the observed state of KnowledgeSource
+            description: GitKnowledgeSourceStatus defines the observed state of GitKnowledgeSource
             properties:
               active:
                 description: Active indicates whether the controller is actively syncing
@@ -177,7 +178,7 @@ spec:
                 type: boolean
               conditions:
                 description: Conditions represent the latest available observations
-                  of the KnowledgeSource's state
+                  of the GitKnowledgeSource's state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -268,11 +269,13 @@ spec:
               skippedFiles:
                 description: SkippedFiles lists files that were skipped with reasons
                 items:
-                  description: SkippedFile represents a file that was skipped during
-                    sync
+                  description: |-
+                    SkippedFile represents a file or document that was skipped during sync
+                    Used by knowledge source CRDs to report skipped items in status
                   properties:
                     path:
-                      description: Path is the file path relative to repository root
+                      description: Path is the file path or identifier relative to
+                        the source
                       type: string
                     reason:
                       description: Reason explains why the file was skipped

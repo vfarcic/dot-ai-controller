@@ -4,8 +4,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// KnowledgeSourceSpec defines the desired state of KnowledgeSource
-type KnowledgeSourceSpec struct {
+// GitKnowledgeSourceSpec defines the desired state of GitKnowledgeSource
+type GitKnowledgeSourceSpec struct {
 	// Repository defines the Git repository to sync documents from
 	// +kubebuilder:validation:Required
 	Repository RepositoryConfig `json:"repository"`
@@ -65,21 +65,8 @@ type RepositoryConfig struct {
 	SecretRef *SecretReference `json:"secretRef,omitempty"`
 }
 
-// McpServerConfig defines the MCP server connection settings
-type McpServerConfig struct {
-	// URL is the MCP server endpoint
-	// Example: "http://mcp-server.dot-ai.svc:3456"
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^https?://.*`
-	URL string `json:"url"`
-
-	// AuthSecretRef references a Secret containing the MCP authentication token
-	// +kubebuilder:validation:Required
-	AuthSecretRef SecretReference `json:"authSecretRef"`
-}
-
-// KnowledgeSourceStatus defines the observed state of KnowledgeSource
-type KnowledgeSourceStatus struct {
+// GitKnowledgeSourceStatus defines the observed state of GitKnowledgeSource
+type GitKnowledgeSourceStatus struct {
 	// Active indicates whether the controller is actively syncing this source
 	// +optional
 	Active bool `json:"active,omitempty"`
@@ -120,7 +107,7 @@ type KnowledgeSourceStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// Conditions represent the latest available observations of the KnowledgeSource's state
+	// Conditions represent the latest available observations of the GitKnowledgeSource's state
 	// +optional
 	// +patchMergeKey=type
 	// +patchStrategy=merge
@@ -129,45 +116,35 @@ type KnowledgeSourceStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
-// SkippedFile represents a file that was skipped during sync
-type SkippedFile struct {
-	// Path is the file path relative to repository root
-	// +kubebuilder:validation:Required
-	Path string `json:"path"`
-
-	// Reason explains why the file was skipped
-	// +kubebuilder:validation:Required
-	Reason string `json:"reason"`
-}
-
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=ks
+// +kubebuilder:resource:scope=Namespaced,shortName=gks
 // +kubebuilder:printcolumn:name="Active",type=boolean,JSONPath=`.status.active`,description="Whether sync is active"
 // +kubebuilder:printcolumn:name="Documents",type=integer,JSONPath=`.status.documentCount`,description="Number of synced documents"
 // +kubebuilder:printcolumn:name="Last Sync",type=date,JSONPath=`.status.lastSyncTime`,description="Time of last sync"
 // +kubebuilder:printcolumn:name="Errors",type=integer,JSONPath=`.status.syncErrors`,description="Sync error count"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`,description="Time since creation"
 
-// KnowledgeSource is the Schema for the knowledgesources API
+// GitKnowledgeSource is the Schema for the gitknowledgesources API
 // It defines a Git repository to sync documents from into the MCP knowledge base
-type KnowledgeSource struct {
+// Works with any Git provider: GitHub, GitLab, Bitbucket, Gitea, self-hosted
+type GitKnowledgeSource struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   KnowledgeSourceSpec   `json:"spec,omitempty"`
-	Status KnowledgeSourceStatus `json:"status,omitempty"`
+	Spec   GitKnowledgeSourceSpec   `json:"spec,omitempty"`
+	Status GitKnowledgeSourceStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// KnowledgeSourceList contains a list of KnowledgeSource
-type KnowledgeSourceList struct {
+// GitKnowledgeSourceList contains a list of GitKnowledgeSource
+type GitKnowledgeSourceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []KnowledgeSource `json:"items"`
+	Items           []GitKnowledgeSource `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&KnowledgeSource{}, &KnowledgeSourceList{})
+	SchemeBuilder.Register(&GitKnowledgeSource{}, &GitKnowledgeSourceList{})
 }
