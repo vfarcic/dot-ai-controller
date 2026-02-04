@@ -261,6 +261,7 @@ processFiles:
 	var syncErrors int
 	var documentCount int
 	var lastError string
+	var skippedFiles []dotaiv1alpha1.SkippedFile
 
 	for _, filePath := range filesToProcess {
 		// Read file content
@@ -269,6 +270,20 @@ processFiles:
 			logger.Error(err, "Failed to read file", "path", filePath)
 			syncErrors++
 			lastError = fmt.Sprintf("Failed to read %s: %v", filePath, err)
+			continue
+		}
+
+		// M6: Skip Tracking - check file size against limit
+		if gks.Spec.MaxFileSizeBytes != nil && int64(len(content)) > *gks.Spec.MaxFileSizeBytes {
+			logger.Info("Skipping file due to size limit",
+				"path", filePath,
+				"size", len(content),
+				"limit", *gks.Spec.MaxFileSizeBytes,
+			)
+			skippedFiles = append(skippedFiles, dotaiv1alpha1.SkippedFile{
+				Path:   filePath,
+				Reason: fmt.Sprintf("exceeded max file size (%d bytes > %d bytes)", len(content), *gks.Spec.MaxFileSizeBytes),
+			})
 			continue
 		}
 
@@ -296,9 +311,11 @@ processFiles:
 	now := metav1.Now()
 	gks.Status.LastSyncTime = &now
 	gks.Status.LastSyncedCommit = headCommit
-	gks.Status.DocumentCount = documentCount
+	gks.Status.DocumentCount += documentCount // Increment with files processed in this sync
 	gks.Status.SyncErrors = syncErrors
 	gks.Status.LastError = lastError
+	gks.Status.SkippedDocuments = len(skippedFiles)
+	gks.Status.SkippedFiles = skippedFiles
 
 	// Set condition based on results
 	if syncErrors == 0 {

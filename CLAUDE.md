@@ -187,6 +187,7 @@ Test files follow Go convention: `*_test.go` alongside source files.
 - Failing tests indicate incomplete implementation, insufficient test isolation, or bugs that must be addressed
 - Always run `make test` (unit + integration) before declaring work finished
 - Run `make test-e2e` for e2e tests - this automatically creates the Kind cluster
+- **Always run `make cleanup-test-e2e` after analyzing e2e test results** - the cluster is reused between runs, which can cause failures if left in a dirty state from previous runs
 - **Do NOT use `go test ./...`** - this includes e2e tests but skips Kind cluster setup, causing failures
 - Fix all test failures before updating PRDs, documentation, or moving to next tasks
 - Test failures are as important as functionality - they ensure maintainability and regression prevention

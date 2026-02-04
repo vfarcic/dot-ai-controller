@@ -318,15 +318,15 @@ spec:
 				g.Expect(output).NotTo(Equal(firstSyncTime), "lastSyncTime should be updated after re-sync")
 			}, 2*time.Minute).Should(Succeed())
 
-			By("verifying no documents were re-synced (change detection)")
+			By("verifying documentCount remains unchanged (change detection)")
 			// With M4 change detection working:
 			// - No files changed since lastSyncedCommit
-			// - Therefore 0 files are synced
-			// - documentCount = 0 (shows as empty due to omitempty)
+			// - Therefore 0 files are synced in this operation
+			// - documentCount stays at previous value (cumulative counter)
 			//
-			// Without M4 (current M3 behavior):
-			// - All matching files are re-synced
-			// - documentCount = N (same as first sync)
+			// Without M4 (would re-sync all files):
+			// - All matching files would be re-synced
+			// - documentCount would increase (5 + 5 = 10)
 			cmd = exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
 				"-n", testNamespace, "-o", "jsonpath={.status.documentCount}")
 			secondCountOutput, err := utils.Run(cmd)
@@ -334,11 +334,15 @@ spec:
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "Second sync documentCount output: '%s'\n", secondCountOutput)
 
-			// With change detection: documentCount should be 0 (empty string due to omitempty)
-			// Without change detection: documentCount would be same as first sync
-			Expect(secondCountOutput).To(BeEmpty(),
-				"Second sync should have documentCount=0 (empty due to omitempty) when nothing changed. "+
-					"This validates M4 Change Detection. Got documentCount='%s', expected empty.", secondCountOutput)
+			// documentCount is a cumulative counter that increments with each file processed
+			// When no files change, 0 files are processed, so count stays the same
+			var secondCount int
+			_, parseErr := fmt.Sscanf(secondCountOutput, "%d", &secondCount)
+			Expect(parseErr).NotTo(HaveOccurred())
+			Expect(secondCount).To(Equal(firstDocCount),
+				"documentCount should remain %d when no files changed. Got %d. "+
+					"This validates M4 Change Detection (incremental sync processed 0 files).",
+				firstDocCount, secondCount)
 
 			By("verifying lastSyncedCommit remains the same")
 			cmd = exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
@@ -349,6 +353,93 @@ spec:
 
 			By("cleaning up")
 			cmd = exec.Command("kubectl", "delete", "gitknowledgesource", "test-change-detection", "-n", testNamespace)
+			_, _ = utils.Run(cmd)
+		})
+	})
+
+	Context("Skip Tracking (M6)", func() {
+		It("should skip files exceeding maxFileSizeBytes and report in status", func() {
+			By("creating a GitKnowledgeSource with maxFileSizeBytes limit")
+			// Set limit to 1024 bytes - this should skip api-reference.md (3887 bytes)
+			// and sync the other 4 files (all under 400 bytes)
+			gks := fmt.Sprintf(`
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: GitKnowledgeSource
+metadata:
+  name: test-skip-tracking
+  namespace: %s
+spec:
+  repository:
+    url: https://github.com/vfarcic/dot-ai-controller.git
+    branch: main
+  paths:
+    - "examples/docs/**/*.md"
+  maxFileSizeBytes: 1024
+  mcpServer:
+    url: http://mock-knowledge-server.e2e-tests.svc.cluster.local:8080
+    authSecretRef:
+      name: mcp-knowledge-auth
+      key: token
+`, testNamespace)
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(gks)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create GitKnowledgeSource")
+
+			By("waiting for sync to complete")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-skip-tracking",
+					"-n", testNamespace, "-o", "jsonpath={.status.lastSyncTime}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(BeEmpty(), "lastSyncTime should be set")
+			}, 3*time.Minute).Should(Succeed())
+
+			By("verifying documentCount is 4 (files under size limit)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-skip-tracking",
+					"-n", testNamespace, "-o", "jsonpath={.status.documentCount}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				var count int
+				_, parseErr := fmt.Sscanf(output, "%d", &count)
+				g.Expect(parseErr).NotTo(HaveOccurred())
+				g.Expect(count).To(Equal(4),
+					"Should have synced 4 documents (excluding api-reference.md which exceeds 1024 bytes)")
+			}).Should(Succeed())
+
+			By("verifying skippedDocuments is 1")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-skip-tracking",
+					"-n", testNamespace, "-o", "jsonpath={.status.skippedDocuments}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				var count int
+				_, parseErr := fmt.Sscanf(output, "%d", &count)
+				g.Expect(parseErr).NotTo(HaveOccurred())
+				g.Expect(count).To(Equal(1),
+					"Should have skipped 1 document (api-reference.md at 3887 bytes > 1024 limit)")
+			}).Should(Succeed())
+
+			By("verifying skippedFiles contains api-reference.md with reason")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-skip-tracking",
+					"-n", testNamespace, "-o", "jsonpath={.status.skippedFiles[0].path}")
+				pathOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(pathOutput).To(ContainSubstring("api-reference.md"),
+					"Skipped file should be api-reference.md")
+
+				cmd = exec.Command("kubectl", "get", "gitknowledgesource", "test-skip-tracking",
+					"-n", testNamespace, "-o", "jsonpath={.status.skippedFiles[0].reason}")
+				reasonOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(reasonOutput).To(ContainSubstring("exceeded max file size"),
+					"Reason should mention exceeded max file size")
+			}).Should(Succeed())
+
+			By("cleaning up")
+			cmd = exec.Command("kubectl", "delete", "gitknowledgesource", "test-skip-tracking", "-n", testNamespace)
 			_, _ = utils.Run(cmd)
 		})
 	})
