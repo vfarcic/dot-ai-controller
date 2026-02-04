@@ -39,6 +39,10 @@ var _ = Describe("GitKnowledgeSource", Ordered, func() {
 		_, _ = utils.Run(cmd)
 	})
 
+	// expectedDocsCount is the number of markdown files in examples/docs/
+	// Update this if you add or remove files from examples/docs/
+	const expectedDocsCount = 5
+
 	Context("Basic Sync Operations", func() {
 		It("should sync documents from a public repository", func() {
 			By("creating a GitKnowledgeSource for a public repo")
@@ -53,7 +57,7 @@ spec:
     url: https://github.com/vfarcic/dot-ai-controller.git
     branch: main
   paths:
-    - "*.md"
+    - "examples/docs/**/*.md"
   mcpServer:
     url: http://mock-knowledge-server.e2e-tests.svc.cluster.local:8080
     authSecretRef:
@@ -102,18 +106,18 @@ spec:
 				g.Expect(len(output)).To(BeNumerically(">=", 7), "Should be a git commit SHA")
 			}).Should(Succeed())
 
-			By("verifying documentCount is set")
+			By("verifying documentCount matches expected count")
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-public-repo",
 					"-n", testNamespace, "-o", "jsonpath={.status.documentCount}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).NotTo(BeEmpty(), "documentCount should be set")
-				// Should have synced at least README.md
 				var count int
 				_, parseErr := fmt.Sscanf(output, "%d", &count)
 				g.Expect(parseErr).NotTo(HaveOccurred())
-				g.Expect(count).To(BeNumerically(">=", 1), "Should have synced at least 1 document")
+				g.Expect(count).To(Equal(expectedDocsCount),
+					"Should have synced exactly %d documents from examples/docs/", expectedDocsCount)
 			}).Should(Succeed())
 
 			By("verifying Ready condition is True")
@@ -145,7 +149,7 @@ spec:
     url: https://github.com/vfarcic/dot-ai-controller.git
     branch: main
   paths:
-    - "*.md"
+    - "examples/docs/**/*.md"
   mcpServer:
     url: http://mock-knowledge-server.e2e-tests.svc.cluster.local:8080
     authSecretRef:
@@ -182,8 +186,10 @@ spec:
 	})
 
 	Context("Pattern Matching", func() {
-		It("should only sync files matching path patterns", func() {
-			By("creating a GitKnowledgeSource with specific patterns")
+		It("should only sync files matching path patterns and respect excludes", func() {
+			By("creating a GitKnowledgeSource with exclude pattern")
+			// Exclude api-reference.md to test exclude functionality
+			// This should sync 4 files (all except api-reference.md)
 			gks := fmt.Sprintf(`
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
 kind: GitKnowledgeSource
@@ -195,9 +201,9 @@ spec:
     url: https://github.com/vfarcic/dot-ai-controller.git
     branch: main
   paths:
-    - "docs/**/*.md"
+    - "examples/docs/**/*.md"
   exclude:
-    - "docs/internal/**"
+    - "examples/docs/api-reference.md"
   mcpServer:
     url: http://mock-knowledge-server.e2e-tests.svc.cluster.local:8080
     authSecretRef:
@@ -218,17 +224,19 @@ spec:
 				g.Expect(output).NotTo(BeEmpty(), "lastSyncTime should be set")
 			}, 3*time.Minute).Should(Succeed())
 
-			By("verifying documentCount reflects pattern filtering")
-			cmd = exec.Command("kubectl", "get", "gitknowledgesource", "test-patterns",
-				"-n", testNamespace, "-o", "jsonpath={.status.documentCount}")
-			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-			// The count should be the number of docs/*.md files (excluding internal)
-			// We just verify it's a valid number
-			var count int
-			_, parseErr := fmt.Sscanf(output, "%d", &count)
-			Expect(parseErr).NotTo(HaveOccurred())
-			_, _ = fmt.Fprintf(GinkgoWriter, "Synced %d documents matching docs/**/*.md pattern\n", count)
+			By("verifying documentCount reflects exclude pattern")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-patterns",
+					"-n", testNamespace, "-o", "jsonpath={.status.documentCount}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				var count int
+				_, parseErr := fmt.Sscanf(output, "%d", &count)
+				g.Expect(parseErr).NotTo(HaveOccurred())
+				// Should be expectedDocsCount - 1 because api-reference.md is excluded
+				g.Expect(count).To(Equal(expectedDocsCount-1),
+					"Should have synced %d documents (excluded api-reference.md)", expectedDocsCount-1)
+			}).Should(Succeed())
 
 			By("cleaning up")
 			cmd = exec.Command("kubectl", "delete", "gitknowledgesource", "test-patterns", "-n", testNamespace)
@@ -250,7 +258,7 @@ spec:
     url: https://github.com/vfarcic/dot-ai-controller.git
     branch: main
   paths:
-    - "README.md"
+    - "examples/docs/**/*.md"
   mcpServer:
     url: http://mock-knowledge-server.e2e-tests.svc.cluster.local:8080
     authSecretRef:
@@ -274,15 +282,16 @@ spec:
 				g.Expect(output).NotTo(BeEmpty(), "lastSyncedCommit should be set")
 				firstSyncCommit = output
 
-				// Check that documentCount > 0 (first sync should sync files)
+				// Check that documentCount equals expected (first sync should sync all files)
 				cmd = exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
 					"-n", testNamespace, "-o", "jsonpath={.status.documentCount}")
 				countOutput, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(countOutput).NotTo(BeEmpty(), "documentCount should be > 0 on first sync")
+				g.Expect(countOutput).NotTo(BeEmpty(), "documentCount should be set on first sync")
 				_, parseErr := fmt.Sscanf(countOutput, "%d", &firstDocCount)
 				g.Expect(parseErr).NotTo(HaveOccurred())
-				g.Expect(firstDocCount).To(BeNumerically(">=", 1), "First sync should sync at least 1 document")
+				g.Expect(firstDocCount).To(Equal(expectedDocsCount),
+					"First sync should sync exactly %d documents", expectedDocsCount)
 			}, 3*time.Minute).Should(Succeed())
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "First sync: commit=%s, documentCount=%d\n", firstSyncCommit, firstDocCount)
