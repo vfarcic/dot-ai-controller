@@ -235,6 +235,114 @@ spec:
 			_, _ = utils.Run(cmd)
 		})
 	})
+
+	Context("Change Detection (M4)", func() {
+		It("should not re-sync documents when nothing has changed", func() {
+			By("creating a GitKnowledgeSource")
+			gks := fmt.Sprintf(`
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: GitKnowledgeSource
+metadata:
+  name: test-change-detection
+  namespace: %s
+spec:
+  repository:
+    url: https://github.com/vfarcic/dot-ai-controller.git
+    branch: main
+  paths:
+    - "README.md"
+  mcpServer:
+    url: http://mock-knowledge-server.e2e-tests.svc.cluster.local:8080
+    authSecretRef:
+      name: mcp-knowledge-auth
+      key: token
+`, testNamespace)
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(gks)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create GitKnowledgeSource")
+
+			By("waiting for first sync to complete with documents synced")
+			var firstSyncCommit string
+			var firstDocCount int
+			Eventually(func(g Gomega) {
+				// Check that lastSyncedCommit is set
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
+					"-n", testNamespace, "-o", "jsonpath={.status.lastSyncedCommit}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(BeEmpty(), "lastSyncedCommit should be set")
+				firstSyncCommit = output
+
+				// Check that documentCount > 0 (first sync should sync files)
+				cmd = exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
+					"-n", testNamespace, "-o", "jsonpath={.status.documentCount}")
+				countOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(countOutput).NotTo(BeEmpty(), "documentCount should be > 0 on first sync")
+				_, parseErr := fmt.Sscanf(countOutput, "%d", &firstDocCount)
+				g.Expect(parseErr).NotTo(HaveOccurred())
+				g.Expect(firstDocCount).To(BeNumerically(">=", 1), "First sync should sync at least 1 document")
+			}, 3*time.Minute).Should(Succeed())
+
+			_, _ = fmt.Fprintf(GinkgoWriter, "First sync: commit=%s, documentCount=%d\n", firstSyncCommit, firstDocCount)
+
+			By("recording the lastSyncTime before triggering re-sync")
+			var firstSyncTime string
+			cmd = exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
+				"-n", testNamespace, "-o", "jsonpath={.status.lastSyncTime}")
+			firstSyncTime, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("triggering a re-sync by updating an annotation")
+			cmd = exec.Command("kubectl", "annotate", "gitknowledgesource", "test-change-detection",
+				"-n", testNamespace, "force-resync="+time.Now().Format(time.RFC3339), "--overwrite")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to annotate GitKnowledgeSource")
+
+			By("waiting for re-sync to complete (lastSyncTime should change)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
+					"-n", testNamespace, "-o", "jsonpath={.status.lastSyncTime}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(Equal(firstSyncTime), "lastSyncTime should be updated after re-sync")
+			}, 2*time.Minute).Should(Succeed())
+
+			By("verifying no documents were re-synced (change detection)")
+			// With M4 change detection working:
+			// - No files changed since lastSyncedCommit
+			// - Therefore 0 files are synced
+			// - documentCount = 0 (shows as empty due to omitempty)
+			//
+			// Without M4 (current M3 behavior):
+			// - All matching files are re-synced
+			// - documentCount = N (same as first sync)
+			cmd = exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
+				"-n", testNamespace, "-o", "jsonpath={.status.documentCount}")
+			secondCountOutput, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, _ = fmt.Fprintf(GinkgoWriter, "Second sync documentCount output: '%s'\n", secondCountOutput)
+
+			// With change detection: documentCount should be 0 (empty string due to omitempty)
+			// Without change detection: documentCount would be same as first sync
+			Expect(secondCountOutput).To(BeEmpty(),
+				"Second sync should have documentCount=0 (empty due to omitempty) when nothing changed. "+
+					"This validates M4 Change Detection. Got documentCount='%s', expected empty.", secondCountOutput)
+
+			By("verifying lastSyncedCommit remains the same")
+			cmd = exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
+				"-n", testNamespace, "-o", "jsonpath={.status.lastSyncedCommit}")
+			secondCommit, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(secondCommit).To(Equal(firstSyncCommit), "lastSyncedCommit should remain the same")
+
+			By("cleaning up")
+			cmd = exec.Command("kubectl", "delete", "gitknowledgesource", "test-change-detection", "-n", testNamespace)
+			_, _ = utils.Run(cmd)
+		})
+	})
 })
 
 // deployMockKnowledgeServer deploys a mock knowledge server for testing GitKnowledgeSource

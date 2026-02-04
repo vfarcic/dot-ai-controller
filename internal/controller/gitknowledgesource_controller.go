@@ -158,19 +158,36 @@ func (r *GitKnowledgeSourceReconciler) doSync(ctx context.Context, gks *dotaiv1a
 	// Determine which files to process
 	var filesToProcess []string
 
-	// For M3, we always do a full sync (no change detection yet - that's M4)
-	// Get all files and filter by patterns
-	allFiles, err := gitClient.GetAllFiles(ctx)
-	if err != nil {
-		errMsg := fmt.Sprintf("Failed to list files: %v", err)
-		r.setErrorCondition(gks, "GitError", errMsg)
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
-	}
-
 	// Filter by patterns
 	matcher := NewPatternMatcher(gks.Spec.Paths, gks.Spec.Exclude)
-	filesToProcess = matcher.FilterFiles(allFiles)
-	logger.Info("Filtered files", "total", len(allFiles), "matching", len(filesToProcess))
+
+	// M4: Change detection - only sync files that changed since last sync
+	if gks.Status.LastSyncedCommit != "" {
+		changedFiles, foundInHistory, err := gitClient.GetChangedFiles(ctx)
+		if err != nil {
+			logger.Error(err, "Failed to get changed files, falling back to full sync")
+		} else if foundInHistory {
+			// Only process changed files that match patterns
+			filesToProcess = matcher.FilterFiles(changedFiles)
+			logger.Info("Incremental sync", "changedFiles", len(changedFiles), "matching", len(filesToProcess))
+			goto processFiles
+		}
+		// Fall through to full sync if commit not in history
+	}
+
+	// Full sync: first sync or fallback
+	{
+		allFiles, err := gitClient.GetAllFiles(ctx)
+		if err != nil {
+			errMsg := fmt.Sprintf("Failed to list files: %v", err)
+			r.setErrorCondition(gks, "GitError", errMsg)
+			return ctrl.Result{RequeueAfter: time.Minute}, nil
+		}
+		filesToProcess = matcher.FilterFiles(allFiles)
+		logger.Info("Full sync", "total", len(allFiles), "matching", len(filesToProcess))
+	}
+
+processFiles:
 
 	// Create MCP client
 	mcpEndpoint := strings.TrimSuffix(gks.Spec.McpServer.URL, "/") + "/api/v1/tools/manageKnowledge"

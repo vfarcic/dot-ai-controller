@@ -159,7 +159,7 @@ Milestones are ordered so each one delivers working, testable functionality. E2e
 - [x] **M1: CRD Definition** - GitKnowledgeSource types with spec/status, code generation, sample CR
 - [x] **M2: Git Operations** - Git client library (clone, auth, file listing) + pattern matcher library. Unit tests only.
 - [x] **M3: MCP Integration** - Wire git+patterns into controller, MCP client, sync docs to MCP. E2e: CR created → docs in MCP
-- [ ] **M4: Change Detection** - Only sync changed files since last sync (optimization). E2e: second sync is incremental
+- [x] **M4: Change Detection** - Only sync changed files since last sync (optimization). E2e: second sync is incremental
 - [ ] **M5: Scheduling** - Cron/interval parsing, RequeueAfter integration. E2e: verify scheduled requeue
 - [ ] **M6: Skip Tracking** - File size filtering, skipped files in status. E2e: verify skipped files reported
 - [ ] **M7: Finalizer/Cleanup** - CR deletion removes MCP documents. E2e: delete CR → MCP docs removed
