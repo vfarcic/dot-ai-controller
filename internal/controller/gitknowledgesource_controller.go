@@ -257,6 +257,13 @@ processFiles:
 		AuthToken: mcpAuthToken,
 	})
 
+	// M7: Build metadata with sourceIdentifier for MCP bulk operations
+	metadata := make(map[string]string)
+	for k, v := range gks.Spec.Metadata {
+		metadata[k] = v
+	}
+	metadata["sourceIdentifier"] = fmt.Sprintf("%s/%s", gks.Namespace, gks.Name)
+
 	// Sync documents to MCP
 	var syncErrors int
 	var documentCount int
@@ -291,7 +298,7 @@ processFiles:
 		uri := BuildDocumentURI(gks.Spec.Repository.URL, gks.Spec.Repository.Branch, filePath)
 
 		// Ingest document
-		resp, err := mcpClient.IngestDocument(ctx, uri, string(content), gks.Spec.Metadata)
+		resp, err := mcpClient.IngestDocument(ctx, uri, string(content), metadata)
 		if err != nil {
 			logger.Error(err, "Failed to ingest document", "path", filePath, "uri", uri)
 			syncErrors++

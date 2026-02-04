@@ -106,6 +106,8 @@ status:
 - Call `POST /api/v1/tools/manageKnowledge` with operations: `ingest`, `deleteByUri`
 - Build URIs: `https://github.com/{org}/{repo}/blob/{branch}/{path}`
 - Retry with exponential backoff + jitter (3 attempts)
+- **Source identifier for bulk operations**: Pass `metadata.sourceIdentifier` with value `"namespace/name"` on every ingest call. This enables MCP to bulk-delete all documents from a source.
+- **Bulk deletion**: Use `DELETE /api/v1/knowledge/source/:sourceIdentifier` endpoint for cleanup (CR deletion, full re-sync)
 
 ### Scheduling
 - Parse cron/interval expressions with `robfig/cron/v3`
@@ -130,6 +132,7 @@ status:
 ## Dependencies
 
 - MCP server with `manageKnowledge` API (from dot-ai-prd-356-knowledge-base-system)
+- MCP `DELETE /api/v1/knowledge/source/:sourceIdentifier` endpoint (from dot-ai-prd-356-knowledge-base-system) - **required for M8**
 - Go libraries: `go-git/go-git/v6`, `robfig/cron/v3`, `bmatcuk/doublestar/v4`
 
 ## Test Infrastructure
@@ -166,9 +169,10 @@ Milestones are ordered so each one delivers working, testable functionality. E2e
 - [x] **M4: Change Detection** - Only sync changed files since last sync (optimization). E2e: second sync is incremental
 - [x] **M5: Scheduling** - Cron/interval parsing, RequeueAfter integration. E2e: verify scheduled requeue
 - [x] **M6: Skip Tracking** - File size filtering, skipped files in status. TDD approach: (1) Write e2e test first with `maxFileSizeBytes: 1024` expecting 4 docs synced, 1 skipped (api-reference.md at 3.8KB), (2) Run test - should FAIL (feature not implemented, gets 5 docs), (3) Implement skip tracking in controller, (4) Run test - should PASS
-- [ ] **M7: Finalizer/Cleanup** - CR deletion removes MCP documents. E2e: delete CR → MCP docs removed
-- [ ] **M8: Documentation** - Update CLAUDE.md, user docs, sample configurations. Include note that the CRD should work with all Git providers (GitHub, GitLab, Bitbucket, Gitea, self-hosted), but testing was done only with GitHub. Welcome user feedback on experience with other providers.
-- [ ] **M9: Feature Response** - Write response to requesting project with usage examples
+- [x] **M7: Source Identifier** - Add `metadata.sourceIdentifier` (namespace/name) to all ingest calls. Enables MCP to track document sources for bulk operations. No external dependency.
+- [ ] **M8: Finalizer/Cleanup** - Use MCP `deleteBySource` API to remove all documents on CR deletion. Requires MCP endpoint from dot-ai-prd-356. E2e: delete CR → MCP docs removed
+- [ ] **M9: Documentation** - Update CLAUDE.md, user docs, sample configurations. Include note that the CRD should work with all Git providers (GitHub, GitLab, Bitbucket, Gitea, self-hosted), but testing was done only with GitHub. Welcome user feedback on experience with other providers.
+- [ ] **M10: Feature Response** - Write response to requesting project with usage examples
 
 ## Out of Scope
 
@@ -201,3 +205,5 @@ Milestones are ordered so each one delivers working, testable functionality. E2e
 | 2026-02-04 | Spec changes trigger full sync | If user changes `spec.paths`, incremental sync won't pick up existing files that now match new patterns. Compare `generation` vs `observedGeneration`; if different, do full sync. | M5 scope expanded; fixes edge case in change detection |
 | 2026-02-04 | Add test fixtures in `examples/docs/` for deterministic e2e tests | Previous tests used loose assertions (`count >= 1`) against the whole repo, which could change over time. Adding 5 known markdown files (4 small ~250-400 bytes, 1 large ~3.8KB) enables exact count validation. For M6 skip tracking: set `maxFileSizeBytes: 1024` to skip the large file and verify exact counts. Test fixtures pushed directly to main branch so tests always use `branch: main`. | E2e tests updated to use `examples/docs/**/*.md` pattern with exact document counts; enables deterministic skip tracking tests |
 | 2026-02-04 | `documentCount` is cumulative counter using increment (`+=`) | When status update triggers re-reconcile, incremental sync processes 0 files but was resetting `documentCount` to 0. Changed to increment so count accumulates across syncs. Count represents total files sent to MCP for processing (new or updated). | M6 implementation; fixed status update race condition |
+| 2026-02-04 | Use MCP `sourceIdentifier` for bulk deletion instead of tracking URIs in status | Tracking URIs in controller status has size concerns (etcd 1.5MB limit) and requires iterating through each URI to delete. MCP can store `sourceIdentifier` with each document and provide `deleteBySource` endpoint for efficient bulk deletion. Also solves deleted-files-during-resync problem. | Split M7 into M7 (add sourceIdentifier) and M8 (use deleteBySource); M8 depends on MCP feature from dot-ai-prd-356 |
+| 2026-02-04 | Two-phase cleanup implementation | M7 (sourceIdentifier) can proceed immediately; M8 (deleteBySource) blocked on MCP endpoint. Allows progress while waiting for cross-project dependency. | Milestones renumbered: M8→M9, M9→M10 |
