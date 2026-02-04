@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,9 +235,10 @@ func TestGitKnowledgeSourceReconciler_Reconcile_MissingMCPSecret(t *testing.T) {
 	recorder := record.NewFakeRecorder(10)
 
 	r := &GitKnowledgeSourceReconciler{
-		Client:   client,
-		Scheme:   scheme,
-		Recorder: recorder,
+		Client:         client,
+		Scheme:         scheme,
+		Recorder:       recorder,
+		ScheduleParser: NewScheduleParser(),
 	}
 
 	ctx := context.Background()
@@ -325,9 +327,10 @@ func TestGitKnowledgeSourceReconciler_Reconcile_Success(t *testing.T) {
 	recorder := record.NewFakeRecorder(10)
 
 	r := &GitKnowledgeSourceReconciler{
-		Client:   client,
-		Scheme:   scheme,
-		Recorder: recorder,
+		Client:         client,
+		Scheme:         scheme,
+		Recorder:       recorder,
+		ScheduleParser: NewScheduleParser(),
 	}
 
 	ctx := context.Background()
@@ -344,7 +347,9 @@ func TestGitKnowledgeSourceReconciler_Reconcile_Success(t *testing.T) {
 
 	// The clone should succeed since it's a public repo
 	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
+	// Should have RequeueAfter set for scheduling (default @every 24h)
+	assert.True(t, result.RequeueAfter > 0, "Expected RequeueAfter to be set for scheduling")
+	assert.InDelta(t, 24*time.Hour, result.RequeueAfter, float64(10*time.Second))
 
 	// Verify status was updated
 	var updated dotaiv1alpha1.GitKnowledgeSource
@@ -355,6 +360,8 @@ func TestGitKnowledgeSourceReconciler_Reconcile_Success(t *testing.T) {
 	assert.NotNil(t, updated.Status.LastSyncTime)
 	assert.NotEmpty(t, updated.Status.LastSyncedCommit)
 	assert.GreaterOrEqual(t, updated.Status.DocumentCount, 0)
+	// Verify NextScheduledSync is set
+	assert.NotNil(t, updated.Status.NextScheduledSync, "Expected NextScheduledSync to be set")
 }
 
 func TestGitKnowledgeSourceReconciler_Reconcile_NotFound(t *testing.T) {
@@ -367,9 +374,10 @@ func TestGitKnowledgeSourceReconciler_Reconcile_NotFound(t *testing.T) {
 		Build()
 
 	r := &GitKnowledgeSourceReconciler{
-		Client:   client,
-		Scheme:   scheme,
-		Recorder: record.NewFakeRecorder(10),
+		Client:         client,
+		Scheme:         scheme,
+		Recorder:       record.NewFakeRecorder(10),
+		ScheduleParser: NewScheduleParser(),
 	}
 
 	ctx := context.Background()
@@ -385,4 +393,172 @@ func TestGitKnowledgeSourceReconciler_Reconcile_NotFound(t *testing.T) {
 	// Should return empty result with no error (resource was deleted)
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
+}
+
+func TestGitKnowledgeSourceReconciler_Reconcile_InvalidSchedule(t *testing.T) {
+	// Create mock MCP server
+	mcpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := IngestResponse{
+			Success:       true,
+			ChunksCreated: 1,
+			ChunkIDs:      []string{"chunk-1"},
+			Message:       "Successfully ingested",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mcpServer.Close()
+
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = dotaiv1alpha1.AddToScheme(scheme)
+
+	mcpSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mcp-auth",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"token": []byte("test-token"),
+		},
+	}
+
+	gks := &dotaiv1alpha1.GitKnowledgeSource{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-gks-invalid-schedule",
+			Namespace:  "default",
+			UID:        types.UID("test-uid-invalid"),
+			Generation: 1,
+		},
+		Spec: dotaiv1alpha1.GitKnowledgeSourceSpec{
+			Repository: dotaiv1alpha1.RepositoryConfig{
+				URL:    "https://github.com/vfarcic/dot-ai-controller.git",
+				Branch: "main",
+			},
+			Paths:    []string{"*.md"},
+			Schedule: "invalid-garbage-schedule", // Invalid schedule
+			McpServer: dotaiv1alpha1.McpServerConfig{
+				URL: mcpServer.URL,
+				AuthSecretRef: dotaiv1alpha1.SecretReference{
+					Name: "mcp-auth",
+					Key:  "token",
+				},
+			},
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(gks, mcpSecret).
+		WithStatusSubresource(gks).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	r := &GitKnowledgeSourceReconciler{
+		Client:         client,
+		Scheme:         scheme,
+		Recorder:       recorder,
+		ScheduleParser: NewScheduleParser(),
+	}
+
+	ctx := context.Background()
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-gks-invalid-schedule",
+			Namespace: "default",
+		},
+	}
+
+	result, err := r.Reconcile(ctx, req)
+
+	// Sync should complete but no requeue (invalid schedule)
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result, "Should not requeue with invalid schedule")
+
+	// Verify status
+	var updated dotaiv1alpha1.GitKnowledgeSource
+	err = client.Get(ctx, req.NamespacedName, &updated)
+	require.NoError(t, err)
+
+	// Sync should still happen
+	assert.True(t, updated.Status.Active)
+	assert.NotNil(t, updated.Status.LastSyncTime)
+	// But NextScheduledSync should be nil
+	assert.Nil(t, updated.Status.NextScheduledSync, "NextScheduledSync should be nil for invalid schedule")
+
+	// Check ScheduleError event was recorded
+	foundScheduleError := false
+	for i := 0; i < 5; i++ {
+		select {
+		case event := <-recorder.Events:
+			if strings.Contains(event, "ScheduleError") {
+				foundScheduleError = true
+			}
+		default:
+		}
+	}
+	assert.True(t, foundScheduleError, "Expected ScheduleError event")
+}
+
+func TestGitKnowledgeSourceReconciler_Reconcile_ConcurrentSyncPrevention(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = dotaiv1alpha1.AddToScheme(scheme)
+
+	gks := &dotaiv1alpha1.GitKnowledgeSource{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-gks-concurrent",
+			Namespace:  "default",
+			UID:        types.UID("test-uid-concurrent"),
+			Generation: 1,
+		},
+		Spec: dotaiv1alpha1.GitKnowledgeSourceSpec{
+			Repository: dotaiv1alpha1.RepositoryConfig{
+				URL:    "https://github.com/acme/platform.git",
+				Branch: "main",
+			},
+			Paths: []string{"docs/**/*.md"},
+			McpServer: dotaiv1alpha1.McpServerConfig{
+				URL: "http://mcp-server:3456",
+				AuthSecretRef: dotaiv1alpha1.SecretReference{
+					Name: "mcp-auth",
+					Key:  "token",
+				},
+			},
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(gks).
+		WithStatusSubresource(gks).
+		Build()
+
+	r := &GitKnowledgeSourceReconciler{
+		Client:         client,
+		Scheme:         scheme,
+		Recorder:       record.NewFakeRecorder(10),
+		ScheduleParser: NewScheduleParser(),
+	}
+
+	ctx := context.Background()
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-gks-concurrent",
+			Namespace: "default",
+		},
+	}
+
+	// Manually acquire the lock to simulate a sync in progress
+	lockKey := req.NamespacedName.String()
+	lock := r.getOrCreateLock(lockKey)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Now try to reconcile - should skip due to lock
+	result, err := r.Reconcile(ctx, req)
+
+	require.NoError(t, err)
+	assert.Equal(t, SyncInProgressRequeueAfter, result.RequeueAfter, "Should requeue after 30s when sync is in progress")
 }

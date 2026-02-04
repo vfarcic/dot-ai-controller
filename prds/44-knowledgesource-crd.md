@@ -98,6 +98,7 @@ status:
 - `--shallow-since` ensures `lastSyncedCommit` is in the cloned history
 - First sync: process all matching files
 - Subsequent syncs: only process files changed since last synced commit
+- **Spec change triggers full sync**: Compare `metadata.generation` vs `status.observedGeneration`; if different, do full sync (ensures new path patterns pick up existing files)
 - Fallback to full sync if `lastSyncedCommit` not found in history (e.g., force push on remote)
 - Clone deleted after each sync to avoid storage buildup (important for large monorepos)
 
@@ -112,6 +113,9 @@ status:
 - Use controller `RequeueAfter` for scheduling (non-blocking, concurrent)
 - **Default schedule: `@every 24h`** (staggered - each CR syncs 24h after its last sync)
 - Immediate sync on CR creation/update
+- **Invalid schedule handling**: Show `ScheduleError` condition in status with parse error message; do not requeue (user must fix CR to trigger next sync)
+- **Concurrent sync prevention**: In-memory mutex per CR with `TryLock()`; if sync already running, skip and requeue after 30s
+- **Sync timeout**: Overall 30-minute timeout on sync operation to prevent stuck locks
 
 ## Success Criteria
 
@@ -160,7 +164,7 @@ Milestones are ordered so each one delivers working, testable functionality. E2e
 - [x] **M2: Git Operations** - Git client library (clone, auth, file listing) + pattern matcher library. Unit tests only.
 - [x] **M3: MCP Integration** - Wire git+patterns into controller, MCP client, sync docs to MCP. E2e: CR created → docs in MCP
 - [x] **M4: Change Detection** - Only sync changed files since last sync (optimization). E2e: second sync is incremental
-- [ ] **M5: Scheduling** - Cron/interval parsing, RequeueAfter integration. E2e: verify scheduled requeue
+- [x] **M5: Scheduling** - Cron/interval parsing, RequeueAfter integration. E2e: verify scheduled requeue
 - [ ] **M6: Skip Tracking** - File size filtering, skipped files in status. E2e: verify skipped files reported
 - [ ] **M7: Finalizer/Cleanup** - CR deletion removes MCP documents. E2e: delete CR → MCP docs removed
 - [ ] **M8: Documentation** - Update CLAUDE.md, user docs, sample configurations. Include note that the CRD should work with all Git providers (GitHub, GitLab, Bitbucket, Gitea, self-hosted), but testing was done only with GitHub. Welcome user feedback on experience with other providers.
@@ -190,3 +194,8 @@ Milestones are ordered so each one delivers working, testable functionality. E2e
 | 2026-02-03 | Include e2e tests in each milestone instead of separate M8 | Incremental testing catches integration issues early. Each milestone validates its functionality in a real Kind cluster. Easier to debug when scope is smaller. Removed separate M8 Testing milestone; renumbered M9→M8, M10→M9. | Milestones restructured; e2e tests now part of each milestone |
 | 2026-02-03 | Reorder milestones: MCP Integration (M3) before Change Detection (M4) | MCP integration is core functionality; change detection is an optimization. After M3, end-to-end flow works (CR → docs in MCP). Change detection can come later. | Swapped M3 and M4; first e2e testable milestone is now M3 |
 | 2026-02-03 | M2 is library code only (unit tests), wiring happens in M3 | Git client and pattern matcher are standalone libraries. No value in wiring to controller without MCP (clone but do nothing). M3 wires everything together for first working e2e test. | M2 complete with unit tests only; e2e tests start at M3 |
+| 2026-02-04 | Show error for invalid schedules instead of silent fallback | Silent fallback to default is poor UX. Users should see why their schedule isn't working. Perform sync, set `ScheduleError` condition, don't requeue until user fixes CR. | M5 error handling defined |
+| 2026-02-04 | Prevent concurrent syncs with in-memory mutex | If sync takes longer than RequeueAfter interval, overlapping syncs waste resources and cause race conditions. Use `TryLock()` per CR; if locked, skip and requeue after 30s. | M5 concurrency protection added |
+| 2026-02-04 | Add 30-minute sync timeout | Prevents stuck locks if sync hangs indefinitely. Git/MCP clients have their own timeouts, but overall timeout provides safety net. Uses `context.WithTimeout()`. | M5 timeout protection added |
+| 2026-02-04 | Test scheduling with `@every 1s` interval | Use very short interval in tests, verify `status.lastSyncTime` changes over time. Pragmatic approach that actually tests scheduled execution happens. | M5 test strategy defined |
+| 2026-02-04 | Spec changes trigger full sync | If user changes `spec.paths`, incremental sync won't pick up existing files that now match new patterns. Compare `generation` vs `observedGeneration`; if different, do full sync. | M5 scope expanded; fixes edge case in change detection |

@@ -260,9 +260,10 @@ func main() {
 	}
 
 	if err := (&controller.GitKnowledgeSourceReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("dot-ai-controller"),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		Recorder:       mgr.GetEventRecorderFor("dot-ai-controller"),
+		ScheduleParser: controller.NewScheduleParser(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GitKnowledgeSource")
 		os.Exit(1)

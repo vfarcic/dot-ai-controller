@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,14 +26,25 @@ const (
 	ConditionTypeReady = "Ready"
 	// ConditionTypeSynced indicates whether the last sync was successful
 	ConditionTypeSynced = "Synced"
+	// ConditionTypeScheduled indicates whether scheduling is configured correctly
+	ConditionTypeScheduled = "Scheduled"
+
+	// SyncTimeout is the maximum duration for a sync operation
+	SyncTimeout = 30 * time.Minute
+	// SyncInProgressRequeueAfter is how long to wait before retrying when sync is in progress
+	SyncInProgressRequeueAfter = 30 * time.Second
 )
+
+// syncLocks tracks active syncs per GitKnowledgeSource to prevent concurrent syncs
+var syncLocks sync.Map // map[string]*sync.Mutex
 
 // GitKnowledgeSourceReconciler reconciles a GitKnowledgeSource object.
 // It clones Git repositories, syncs matching documents to MCP, and handles cleanup.
 type GitKnowledgeSourceReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme         *runtime.Scheme
+	Recorder       record.EventRecorder
+	ScheduleParser *ScheduleParser
 }
 
 // +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=gitknowledgesources,verbs=get;list;watch;create;update;patch;delete
@@ -43,13 +55,14 @@ type GitKnowledgeSourceReconciler struct {
 
 // Reconcile handles GitKnowledgeSource reconciliation.
 // For each GitKnowledgeSource, it:
-// 1. Clones the specified Git repository (fresh clone each time)
-// 2. Filters files by path patterns (include/exclude)
-// 3. Detects changed files since last sync using git diff
-// 4. Syncs changed documents to MCP via manageKnowledge API
-// 5. Updates status with sync results
-// 6. Cleans up clone directory after sync
-// 7. Schedules next sync using RequeueAfter (M5)
+// 1. Acquires lock to prevent concurrent syncs on same CR
+// 2. Clones the specified Git repository (fresh clone each time)
+// 3. Filters files by path patterns (include/exclude)
+// 4. Detects changed files since last sync using git diff (full sync if spec changed)
+// 5. Syncs changed documents to MCP via manageKnowledge API
+// 6. Updates status with sync results
+// 7. Cleans up clone directory after sync
+// 8. Schedules next sync using RequeueAfter
 func (r *GitKnowledgeSourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx).WithValues("gitknowledgesource", req.NamespacedName)
 
@@ -60,16 +73,39 @@ func (r *GitKnowledgeSourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Try to acquire lock for this CR to prevent concurrent syncs
+	lockKey := req.NamespacedName.String()
+	lock := r.getOrCreateLock(lockKey)
+	if !lock.TryLock() {
+		logger.Info("Sync already in progress, skipping")
+		return ctrl.Result{RequeueAfter: SyncInProgressRequeueAfter}, nil
+	}
+	defer lock.Unlock()
+
 	logger.Info("Reconciling GitKnowledgeSource",
 		"repository", gks.Spec.Repository.URL,
 		"branch", gks.Spec.Repository.Branch,
 	)
 
-	// Update observed generation
+	// Check if spec changed (for full sync decision)
+	specChanged := gks.Generation != gks.Status.ObservedGeneration
+
+	// Update observed generation before sync
 	gks.Status.ObservedGeneration = gks.Generation
 
+	// Apply sync timeout
+	syncCtx, cancel := context.WithTimeout(ctx, SyncTimeout)
+	defer cancel()
+
 	// Perform the sync
-	result, err := r.doSync(ctx, &gks)
+	result, err := r.doSync(syncCtx, &gks, specChanged)
+
+	// Check for timeout
+	if syncCtx.Err() == context.DeadlineExceeded {
+		logger.Error(syncCtx.Err(), "Sync timed out")
+		r.setErrorCondition(&gks, "SyncTimeout", "Sync operation timed out after 30 minutes")
+		r.Recorder.Event(&gks, corev1.EventTypeWarning, "SyncTimeout", "Sync operation timed out")
+	}
 
 	// Update status regardless of error
 	if statusErr := r.Status().Update(ctx, &gks); statusErr != nil {
@@ -82,12 +118,34 @@ func (r *GitKnowledgeSourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return result, err
 }
 
+// getOrCreateLock returns the mutex for a given key, creating one if needed.
+func (r *GitKnowledgeSourceReconciler) getOrCreateLock(key string) *sync.Mutex {
+	lock, _ := syncLocks.LoadOrStore(key, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
 // doSync performs the actual sync operation.
-func (r *GitKnowledgeSourceReconciler) doSync(ctx context.Context, gks *dotaiv1alpha1.GitKnowledgeSource) (ctrl.Result, error) {
+// specChanged indicates if the CR spec was modified (triggers full sync).
+func (r *GitKnowledgeSourceReconciler) doSync(ctx context.Context, gks *dotaiv1alpha1.GitKnowledgeSource, specChanged bool) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 
 	// Mark as active
 	gks.Status.Active = true
+
+	// Validate schedule early - if invalid, we still sync but don't schedule
+	schedule := gks.Spec.Schedule
+	if schedule == "" {
+		schedule = DefaultSchedule
+	}
+	scheduleValid := true
+	if r.ScheduleParser != nil {
+		if err := r.ScheduleParser.ValidateSchedule(schedule); err != nil {
+			logger.Error(err, "Invalid schedule configured")
+			r.setScheduleErrorCondition(gks, err.Error())
+			r.Recorder.Eventf(gks, corev1.EventTypeWarning, "ScheduleError", "Invalid schedule: %v", err)
+			scheduleValid = false
+		}
+	}
 
 	// Get Git auth token if configured
 	var gitAuthToken string
@@ -162,7 +220,8 @@ func (r *GitKnowledgeSourceReconciler) doSync(ctx context.Context, gks *dotaiv1a
 	matcher := NewPatternMatcher(gks.Spec.Paths, gks.Spec.Exclude)
 
 	// M4: Change detection - only sync files that changed since last sync
-	if gks.Status.LastSyncedCommit != "" {
+	// M5: Force full sync if spec changed (e.g., paths filter modified)
+	if gks.Status.LastSyncedCommit != "" && !specChanged {
 		changedFiles, foundInHistory, err := gitClient.GetChangedFiles(ctx)
 		if err != nil {
 			logger.Error(err, "Failed to get changed files, falling back to full sync")
@@ -173,6 +232,8 @@ func (r *GitKnowledgeSourceReconciler) doSync(ctx context.Context, gks *dotaiv1a
 			goto processFiles
 		}
 		// Fall through to full sync if commit not in history
+	} else if specChanged {
+		logger.Info("Spec changed, performing full sync")
 	}
 
 	// Full sync: first sync or fallback
@@ -267,7 +328,31 @@ processFiles:
 		"commit", headCommit,
 	)
 
-	// No requeue for now (scheduling is M5)
+	// Calculate next scheduled sync
+	if scheduleValid && r.ScheduleParser != nil {
+		duration, nextTime, err := r.ScheduleParser.NextSyncDuration(schedule, now.Time)
+		if err != nil {
+			// This shouldn't happen since we validated earlier, but handle gracefully
+			logger.Error(err, "Failed to calculate next sync time")
+			gks.Status.NextScheduledSync = nil
+			return ctrl.Result{}, nil
+		}
+
+		gks.Status.NextScheduledSync = &metav1.Time{Time: nextTime}
+		r.setScheduledCondition(gks, true, "Scheduled",
+			fmt.Sprintf("Next sync scheduled for %s", nextTime.Format(time.RFC3339)))
+
+		logger.Info("Scheduled next sync",
+			"schedule", schedule,
+			"nextSync", nextTime.Format(time.RFC3339),
+			"duration", duration.String(),
+		)
+
+		return ctrl.Result{RequeueAfter: duration}, nil
+	}
+
+	// Invalid schedule - don't requeue, user must fix CR
+	gks.Status.NextScheduledSync = nil
 	return ctrl.Result{}, nil
 }
 
@@ -323,6 +408,33 @@ func (r *GitKnowledgeSourceReconciler) setSyncedCondition(gks *dotaiv1alpha1.Git
 		Reason:             reason,
 		Message:            message,
 	})
+}
+
+// setScheduledCondition sets the Scheduled condition.
+func (r *GitKnowledgeSourceReconciler) setScheduledCondition(gks *dotaiv1alpha1.GitKnowledgeSource, success bool, reason, message string) {
+	status := metav1.ConditionFalse
+	if success {
+		status = metav1.ConditionTrue
+	}
+	meta.SetStatusCondition(&gks.Status.Conditions, metav1.Condition{
+		Type:               ConditionTypeScheduled,
+		Status:             status,
+		ObservedGeneration: gks.Generation,
+		Reason:             reason,
+		Message:            message,
+	})
+}
+
+// setScheduleErrorCondition sets the Scheduled condition to False with an error.
+func (r *GitKnowledgeSourceReconciler) setScheduleErrorCondition(gks *dotaiv1alpha1.GitKnowledgeSource, message string) {
+	meta.SetStatusCondition(&gks.Status.Conditions, metav1.Condition{
+		Type:               ConditionTypeScheduled,
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: gks.Generation,
+		Reason:             "ScheduleError",
+		Message:            message,
+	})
+	gks.Status.NextScheduledSync = nil
 }
 
 // BuildDocumentURI constructs the blob URL for a file in a Git repository.
