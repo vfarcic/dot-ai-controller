@@ -427,8 +427,11 @@ processFiles:
 	gks.Status.DocumentCount += documentCount // Increment with files processed in this sync
 	gks.Status.SyncErrors = syncErrors
 	gks.Status.LastError = lastError
-	gks.Status.SkippedDocuments = len(skippedFiles)
-	gks.Status.SkippedFiles = skippedFiles
+	// Only update skipped tracking if files were processed (avoid resetting on incremental syncs with no changes)
+	if len(filesToProcess) > 0 {
+		gks.Status.SkippedDocuments = len(skippedFiles)
+		gks.Status.SkippedFiles = skippedFiles
+	}
 
 	// Set condition based on results
 	if syncErrors == 0 {
