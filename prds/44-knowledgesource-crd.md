@@ -173,7 +173,7 @@ Milestones are ordered so each one delivers working, testable functionality. E2e
 - [x] **M7: Source Identifier** - Add `metadata.sourceIdentifier` (namespace/name) to all ingest calls. Enables MCP to track document sources for bulk operations. No external dependency.
 - [x] **M8: Finalizer/Cleanup** - Use MCP `deleteBySource` API to remove all documents on CR deletion. Requires MCP endpoint from dot-ai-prd-356. E2e: delete CR → MCP docs removed
 - [x] **M9: Documentation** - Update CLAUDE.md, user docs, sample configurations. Include note that the CRD should work with all Git providers (GitHub, GitLab, Bitbucket, Gitea, self-hosted), but testing was done only with GitHub. Welcome user feedback on experience with other providers.
-- [ ] **M10: Feature Response** - Write response to requesting project with usage examples
+- [x] **M10: Feature Response** - Write response to requesting project with usage examples
 
 ## Out of Scope
 
