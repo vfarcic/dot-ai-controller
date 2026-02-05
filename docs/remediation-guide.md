@@ -2,13 +2,6 @@
 
 This guide covers the RemediationPolicy CRD for event-driven remediation using the DevOps AI Toolkit.
 
-## Prerequisites
-
-- Controller installed (see [Setup Guide](setup-guide.md))
-- **DevOps AI Toolkit MCP installed** - See [DevOps AI Toolkit documentation](https://devopstoolkit.ai/docs/mcp)
-- Slack webhook URL (optional, for Slack notifications)
-- Google Chat webhook URL (optional, for Google Chat notifications - requires Google Workspace paid account)
-
 ## Overview
 
 The RemediationPolicy CRD monitors Kubernetes events and forwards them to the DevOps AI Toolkit MCP for analysis and remediation. It supports:
@@ -19,6 +12,13 @@ The RemediationPolicy CRD monitors Kubernetes events and forwards them to the De
 - **Slack Notifications**: Rich notifications with remediation results and next steps
 - **Rate Limiting**: Prevents event storms with configurable cooldowns
 - **Status Reporting**: Comprehensive observability through status updates
+
+## Prerequisites
+
+- Controller installed (see [Setup Guide](setup-guide.md))
+- **DevOps AI Toolkit MCP installed** - See [DevOps AI Toolkit documentation](https://devopstoolkit.ai/docs/mcp)
+- Slack webhook URL (optional, for Slack notifications)
+- Google Chat webhook URL (optional, for Google Chat notifications - requires Google Workspace paid account)
 
 ## Create a RemediationPolicy
 

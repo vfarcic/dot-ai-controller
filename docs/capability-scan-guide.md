@@ -61,6 +61,52 @@ kubectl apply -f capabilityscanconfig.yaml
 
 The controller will perform an initial scan of all cluster resources and then watch for CRD changes.
 
+## How It Works
+
+### Startup Reconciliation
+
+When the controller starts (or restarts), it performs a diff-and-sync:
+
+1. **List Cluster Resources**: Uses Discovery API to get all resources (core + CRDs) matching include/exclude filters
+2. **List MCP Capabilities**: Queries MCP for existing capability IDs
+3. **Compute Diff**:
+   - Resources in cluster but not in MCP → trigger targeted scan
+   - Capabilities in MCP but not in cluster → delete orphaned
+
+This ensures the controller recovers gracefully from restarts without missing any changes.
+
+### Event-Driven Scanning
+
+After startup, the controller watches for CRD events:
+
+1. **CRD Created/Updated**: Queue for capability scan
+2. **CRD Deleted**: Queue for capability deletion
+3. **Debounce**: Wait for `debounceWindowSeconds` to collect more events
+4. **Batch Request**: Send all queued scans in a single request
+
+### Debouncing
+
+When operators are installed, many CRDs may be created in rapid succession. Debouncing prevents overwhelming MCP with individual requests:
+
+```text
+Time 0s:   CRD-A created → add to buffer
+Time 1s:   CRD-B created → add to buffer
+Time 2s:   CRD-C created → add to buffer
+...
+Time 10s:  Flush buffer → single request: "CRD-A,CRD-B,CRD-C"
+```
+
+Configure the window based on your needs:
+- **Lower values (1-5s)**: Faster scanning, more HTTP requests
+- **Higher values (30-60s)**: Fewer requests, delayed scanning
+
+### Fire-and-Forget Model
+
+The controller uses a fire-and-forget pattern:
+- Scans are triggered asynchronously (controller doesn't wait for completion)
+- MCP performs the actual capability analysis in the background
+- Failed scans are automatically retried on next controller restart
+
 ## Configuration
 
 ### Spec Fields
@@ -143,52 +189,6 @@ kubectl get capabilityscanconfig default-scan -o yaml
 | Type | Description |
 |------|-------------|
 | `Ready` | True when controller is watching CRDs and connected to MCP |
-
-## How It Works
-
-### Startup Reconciliation
-
-When the controller starts (or restarts), it performs a diff-and-sync:
-
-1. **List Cluster Resources**: Uses Discovery API to get all resources (core + CRDs) matching include/exclude filters
-2. **List MCP Capabilities**: Queries MCP for existing capability IDs
-3. **Compute Diff**:
-   - Resources in cluster but not in MCP → trigger targeted scan
-   - Capabilities in MCP but not in cluster → delete orphaned
-
-This ensures the controller recovers gracefully from restarts without missing any changes.
-
-### Event-Driven Scanning
-
-After startup, the controller watches for CRD events:
-
-1. **CRD Created/Updated**: Queue for capability scan
-2. **CRD Deleted**: Queue for capability deletion
-3. **Debounce**: Wait for `debounceWindowSeconds` to collect more events
-4. **Batch Request**: Send all queued scans in a single request
-
-### Debouncing
-
-When operators are installed, many CRDs may be created in rapid succession. Debouncing prevents overwhelming MCP with individual requests:
-
-```text
-Time 0s:   CRD-A created → add to buffer
-Time 1s:   CRD-B created → add to buffer
-Time 2s:   CRD-C created → add to buffer
-...
-Time 10s:  Flush buffer → single request: "CRD-A,CRD-B,CRD-C"
-```
-
-Configure the window based on your needs:
-- **Lower values (1-5s)**: Faster scanning, more HTTP requests
-- **Higher values (30-60s)**: Fewer requests, delayed scanning
-
-### Fire-and-Forget Model
-
-The controller uses a fire-and-forget pattern:
-- Scans are triggered asynchronously (controller doesn't wait for completion)
-- MCP performs the actual capability analysis in the background
-- Failed scans are automatically retried on next controller restart
 
 ## Example: Full Configuration
 

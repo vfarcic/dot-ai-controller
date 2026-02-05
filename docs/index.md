@@ -86,6 +86,18 @@ Keep your cluster's capability data up-to-date for AI-powered recommendations:
 
 **Requires** [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp) for capability storage and analysis.
 
+### 5. GitKnowledgeSource CRD - Documentation Ingestion
+
+Automatically sync documentation from Git repositories into the knowledge base:
+
+- **Document Ingestion**: Syncs markdown and other files to MCP knowledge base
+- **Change Detection**: Only processes files changed since the last sync
+- **Scheduled Sync**: Periodically re-syncs to capture updates
+- **Pattern Matching**: Flexible glob patterns for file selection
+- **Automatic Cleanup**: Removes documents from knowledge base when CR is deleted
+
+**Requires** [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp) for knowledge base storage.
+
 ## Quick Start
 
 > **Recommended**: For the easiest setup, we recommend installing the complete dot-ai stack which includes all components. See the [Stack Installation Guide](https://devopstoolkit.ai/docs/stack).
@@ -107,7 +119,7 @@ helm install dot-ai-controller oci://ghcr.io/vfarcic/dot-ai-controller/charts/do
   --wait
 ```
 
-This installs all four CRDs (Solution, RemediationPolicy, ResourceSyncConfig, and CapabilityScanConfig) and the controller.
+This installs all five CRDs (Solution, RemediationPolicy, ResourceSyncConfig, CapabilityScanConfig, and GitKnowledgeSource) and the controller.
 
 ### 2. Choose Your Feature
 
@@ -219,6 +231,7 @@ See the [Solution Guide](solution-guide.md) for complete examples and usage patt
 - **[Remediation Guide](remediation-guide.md)** - Event-driven remediation
 - **[Resource Sync Guide](resource-sync-guide.md)** - Resource visibility and semantic search
 - **[Capability Scan Guide](capability-scan-guide.md)** - Autonomous capability discovery
+- **[Knowledge Source Guide](knowledge-source-guide.md)** - Documentation ingestion from Git
 - **[Solution Guide](solution-guide.md)** - Resource tracking and lifecycle management
 - **[Troubleshooting Guide](troubleshooting.md)** - Common issues and solutions
 
