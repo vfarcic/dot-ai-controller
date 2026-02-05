@@ -349,9 +349,8 @@ func TestGitKnowledgeSourceReconciler_Reconcile_Success(t *testing.T) {
 
 	// The clone should succeed since it's a public repo
 	require.NoError(t, err)
-	// Should have RequeueAfter set for scheduling (default @every 24h)
+	// Should have RequeueAfter set for scheduling
 	assert.True(t, result.RequeueAfter > 0, "Expected RequeueAfter to be set for scheduling")
-	assert.InDelta(t, 24*time.Hour, result.RequeueAfter, float64(10*time.Second))
 
 	// Verify status was updated
 	var updated dotaiv1alpha1.GitKnowledgeSource

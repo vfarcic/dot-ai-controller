@@ -78,7 +78,7 @@ kubectl get gitknowledgesource my-docs -n dot-ai
 ```
 
 Expected output:
-```
+```text
 NAME      ACTIVE   DOCUMENTS   LAST SYNC              NEXT SYNC
 my-docs   true     9           2026-02-05T16:40:14Z   2026-02-06T16:40:14Z
 ```

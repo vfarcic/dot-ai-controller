@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
@@ -306,12 +307,12 @@ func IsRepoNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
-	errStr := err.Error()
+	errStr := strings.ToLower(err.Error())
 	// Common patterns across git providers
-	return contains(errStr, "repository not found") ||
-		contains(errStr, "not found") ||
-		contains(errStr, "authentication required") ||
-		contains(errStr, "could not read Username")
+	return strings.Contains(errStr, "repository not found") ||
+		strings.Contains(errStr, "not found") ||
+		strings.Contains(errStr, "authentication required") ||
+		strings.Contains(errStr, "could not read username")
 }
 
 // IsAuthenticationError checks if the error indicates an authentication failure.
@@ -319,38 +320,11 @@ func IsAuthenticationError(err error) bool {
 	if err == nil {
 		return false
 	}
-	errStr := err.Error()
-	return contains(errStr, "authentication") ||
-		contains(errStr, "401") ||
-		contains(errStr, "403") ||
-		contains(errStr, "invalid credentials")
-}
-
-// contains is a simple case-insensitive contains check.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && containsLower(toLower(s), toLower(substr))))
-}
-
-func containsLower(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
-func toLower(s string) string {
-	b := make([]byte, len(s))
-	for i := range s {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		b[i] = c
-	}
-	return string(b)
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "authentication") ||
+		strings.Contains(errStr, "401") ||
+		strings.Contains(errStr, "403") ||
+		strings.Contains(errStr, "invalid credentials")
 }
 
 // BuildCloneDir constructs the clone directory path for a GitKnowledgeSource.

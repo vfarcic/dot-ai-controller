@@ -92,6 +92,10 @@ func (r *GitKnowledgeSourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 				logger.Error(err, "Failed to remove finalizer")
 				return ctrl.Result{}, err
 			}
+
+			// Clean up sync lock to prevent memory leak
+			syncLocks.Delete(req.NamespacedName.String())
+
 			logger.Info("Finalizer removed, deletion complete")
 		}
 		return ctrl.Result{}, nil
