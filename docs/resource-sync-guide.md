@@ -57,6 +57,34 @@ spec:
 kubectl apply -f resourcesyncconfig.yaml
 ```
 
+## How It Works
+
+1. **Discovery**: Controller discovers all resource types via the Kubernetes Discovery API
+2. **Informers**: Dynamic informers are created for each resource type
+3. **Change Detection**: Informer event handlers detect create/update/delete events
+4. **Debouncing**: Changes are batched in a time window to reduce API calls
+5. **Sync to MCP**: Batched changes are sent to MCP via HTTP
+6. **Periodic Resync**: Full state is sent periodically to catch any missed events
+
+### What Gets Synced
+
+For each resource, the following metadata is synced to MCP:
+- Kind, APIVersion, Name, Namespace
+- Labels and select annotations (description-related)
+- Creation and update timestamps
+
+This metadata enables semantic search to discover resources (e.g., "find all databases", "list deployments in production").
+
+### What's NOT Synced
+
+The following are **not** synced to reduce traffic and storage:
+- **Resource status** - fetched on-demand from Kubernetes API when needed
+- **Resource spec** - fetched on-demand from Kubernetes API when needed
+- High-volume resources: Events, Leases, EndpointSlices
+- Large annotations like `kubectl.kubernetes.io/last-applied-configuration`
+
+This design means resource discovery happens via semantic search in Qdrant, while current state (status/spec) is always fetched fresh from the Kubernetes API.
+
 ## Configuration
 
 ### Spec Fields
@@ -92,34 +120,6 @@ kubectl get resourcesyncconfig default-sync -o yaml
 | Type | Description |
 |------|-------------|
 | `Ready` | True when watcher is active and syncing |
-
-## How It Works
-
-1. **Discovery**: Controller discovers all resource types via the Kubernetes Discovery API
-2. **Informers**: Dynamic informers are created for each resource type
-3. **Change Detection**: Informer event handlers detect create/update/delete events
-4. **Debouncing**: Changes are batched in a time window to reduce API calls
-5. **Sync to MCP**: Batched changes are sent to MCP via HTTP
-6. **Periodic Resync**: Full state is sent periodically to catch any missed events
-
-### What Gets Synced
-
-For each resource, the following metadata is synced to MCP:
-- Kind, APIVersion, Name, Namespace
-- Labels and select annotations (description-related)
-- Creation and update timestamps
-
-This metadata enables semantic search to discover resources (e.g., "find all databases", "list deployments in production").
-
-### What's NOT Synced
-
-The following are **not** synced to reduce traffic and storage:
-- **Resource status** - fetched on-demand from Kubernetes API when needed
-- **Resource spec** - fetched on-demand from Kubernetes API when needed
-- High-volume resources: Events, Leases, EndpointSlices
-- Large annotations like `kubectl.kubernetes.io/last-applied-configuration`
-
-This design means resource discovery happens via semantic search in Qdrant, while current state (status/spec) is always fetched fresh from the Kubernetes API.
 
 ## Semantic Search
 

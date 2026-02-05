@@ -1,0 +1,31 @@
+# GitKnowledgeSource with custom schedule and file size limit
+# Shows both interval (@every) and cron syntax options
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: GitKnowledgeSource
+metadata:
+  name: api-docs
+spec:
+  repository:
+    url: https://github.com/acme/api-service.git
+    branch: main
+    depth: 1
+    secretRef:
+      name: github-credentials
+      key: token
+  paths:
+    - "docs/**/*.md"
+    - "api/**/*.yaml"
+  # Schedule options:
+  #   "@every 6h"   - every 6 hours (staggered)
+  #   "@every 24h"  - once per day (default)
+  #   "0 3 * * *"   - daily at 3am (fixed time)
+  schedule: "@every 6h"
+  mcpServer:
+    url: http://mcp-server.dot-ai.svc:3456
+    authSecretRef:
+      name: mcp-auth
+      key: token
+  metadata:
+    source: "api-docs"
+    team: "platform"
+  maxFileSizeBytes: 1048576  # 1MB limit - files larger than this are skipped

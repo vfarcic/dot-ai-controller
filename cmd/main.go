@@ -258,6 +258,16 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "CapabilityScanConfig")
 		os.Exit(1)
 	}
+
+	if err := (&controller.GitKnowledgeSourceReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		Recorder:       mgr.GetEventRecorderFor("dot-ai-controller"),
+		ScheduleParser: controller.NewScheduleParser(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "GitKnowledgeSource")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {

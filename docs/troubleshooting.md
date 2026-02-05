@@ -225,7 +225,52 @@ kubectl get capabilityscanconfigs --output jsonpath='{.items[*].status.lastError
 kubectl get capabilityscanconfigs --output jsonpath='{.items[*].spec.includeResources}'
 ```
 
-### 9. ResourceSync High Traffic or Performance Issues
+### 9. GitKnowledgeSource Not Syncing
+
+**Symptoms:**
+```bash
+# GitKnowledgeSource status shows errors or Synced condition is False
+kubectl get gitknowledgesources --output yaml
+```
+
+**Diagnosis:**
+```bash
+# Check GitKnowledgeSource status
+kubectl get gitknowledgesources -n dot-ai -o jsonpath='{.items[*].status}'
+
+# Check controller logs for sync errors
+kubectl logs --selector app.kubernetes.io/name=dot-ai-controller --namespace dot-ai | grep -i "gitknowledge\|clone"
+
+# Verify MCP endpoint is reachable
+kubectl exec --namespace dot-ai deployment/dot-ai-controller-manager -- \
+  curl -v http://dot-ai.dot-ai.svc:3456/health
+```
+
+**Common Causes:**
+- **CloneError with "read-only file system"**: Controller deployment missing `/tmp` volume mount
+- **Authentication failure**: Invalid or missing token for private repositories
+- **MCP unreachable**: Wrong MCP server URL or network issues
+- **Invalid path patterns**: Glob patterns not matching any files
+
+**Solution:**
+```bash
+# Check for read-only filesystem error (needs /tmp volume)
+kubectl get gitknowledgesources -n dot-ai -o jsonpath='{.items[*].status.lastError}'
+
+# Verify the controller has /tmp volume mounted
+kubectl get deployment dot-ai-controller-manager -n dot-ai -o jsonpath='{.spec.template.spec.containers[0].volumeMounts}'
+
+# If missing, patch to add /tmp volume:
+kubectl patch deployment dot-ai-controller-manager -n dot-ai --type='json' -p='[
+  {"op": "add", "path": "/spec/template/spec/volumes", "value": [{"name": "tmp-dir", "emptyDir": {}}]},
+  {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts", "value": [{"name": "tmp-dir", "mountPath": "/tmp"}]}
+]'
+
+# For private repo auth issues, verify secret exists
+kubectl get secret <secret-name> -n dot-ai -o jsonpath='{.data.<key>}' | base64 -d
+```
+
+### 10. ResourceSync High Traffic or Performance Issues
 
 **Symptoms:**
 - High CPU/memory usage on controller

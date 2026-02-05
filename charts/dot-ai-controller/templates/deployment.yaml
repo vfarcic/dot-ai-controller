@@ -62,5 +62,11 @@ spec:
           periodSeconds: 10
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
+        volumeMounts:
+        - name: tmp-dir
+          mountPath: /tmp
+      volumes:
+      - name: tmp-dir
+        emptyDir: {}
       serviceAccountName: {{ include "dot-ai-controller.serviceAccountName" . }}
       terminationGracePeriodSeconds: 1260

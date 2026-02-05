@@ -107,7 +107,7 @@ The RemediationPolicy CRD enables event-driven remediation with AI-powered analy
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| eventSelector | EventSelector | Yes | Filter for Kubernetes events |
+| eventSelectors | []EventSelector | Yes | Filters for Kubernetes events |
 | mode | string | No | Execution mode (automatic, manual) |
 | mcpEndpoint | string | Yes | MCP server endpoint |
 | rateLimiting | RateLimitConfig | No | Rate limiting configuration |

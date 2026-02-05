@@ -1,0 +1,23 @@
+# Basic GitKnowledgeSource example - sync markdown docs from a public repo
+# Uses default schedule (@every 24h) - syncs once per day
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: GitKnowledgeSource
+metadata:
+  name: platform-docs
+spec:
+  repository:
+    url: https://github.com/acme/platform.git
+    branch: main
+    depth: 1
+  paths:
+    - "docs/**/*.md"
+    - "README.md"
+  exclude:
+    - "docs/internal/**"
+  mcpServer:
+    url: http://mcp-server.dot-ai.svc:3456
+    authSecretRef:
+      name: mcp-auth
+      key: token
+  metadata:
+    source: "platform-docs"
