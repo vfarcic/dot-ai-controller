@@ -443,6 +443,127 @@ spec:
 			_, _ = utils.Run(cmd)
 		})
 	})
+
+	Context("Finalizer/Cleanup (M8)", func() {
+		It("should delete CR successfully with default deletionPolicy (Delete)", func() {
+			By("creating a GitKnowledgeSource with default deletionPolicy")
+			gks := fmt.Sprintf(`
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: GitKnowledgeSource
+metadata:
+  name: test-cleanup-delete
+  namespace: %s
+spec:
+  repository:
+    url: https://github.com/vfarcic/dot-ai-controller.git
+    branch: main
+  paths:
+    - "examples/docs/**/*.md"
+  mcpServer:
+    url: http://mock-knowledge-server.e2e-tests.svc.cluster.local:8080
+    authSecretRef:
+      name: mcp-knowledge-auth
+      key: token
+`, testNamespace)
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(gks)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create GitKnowledgeSource")
+
+			By("waiting for sync to complete")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-cleanup-delete",
+					"-n", testNamespace, "-o", "jsonpath={.status.documentCount}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(BeEmpty(), "documentCount should be set")
+			}, 3*time.Minute).Should(Succeed())
+
+			By("verifying finalizer is present")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-cleanup-delete",
+					"-n", testNamespace, "-o", "jsonpath={.metadata.finalizers}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("dot-ai.devopstoolkit.live/finalizer"),
+					"Finalizer should be present")
+			}).Should(Succeed())
+
+			By("deleting the GitKnowledgeSource")
+			cmd = exec.Command("kubectl", "delete", "gitknowledgesource", "test-cleanup-delete", "-n", testNamespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete GitKnowledgeSource")
+
+			By("verifying the CR is fully deleted (finalizer completed)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-cleanup-delete",
+					"-n", testNamespace, "--ignore-not-found", "-o", "name")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(BeEmpty(), "CR should be deleted")
+			}, 2*time.Minute).Should(Succeed())
+		})
+
+		It("should delete CR successfully with deletionPolicy=Retain", func() {
+			By("creating a GitKnowledgeSource with deletionPolicy: Retain")
+			gks := fmt.Sprintf(`
+apiVersion: dot-ai.devopstoolkit.live/v1alpha1
+kind: GitKnowledgeSource
+metadata:
+  name: test-cleanup-retain
+  namespace: %s
+spec:
+  repository:
+    url: https://github.com/vfarcic/dot-ai-controller.git
+    branch: main
+  paths:
+    - "examples/docs/**/*.md"
+  deletionPolicy: Retain
+  mcpServer:
+    url: http://mock-knowledge-server.e2e-tests.svc.cluster.local:8080
+    authSecretRef:
+      name: mcp-knowledge-auth
+      key: token
+`, testNamespace)
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(gks)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create GitKnowledgeSource")
+
+			By("waiting for sync to complete")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-cleanup-retain",
+					"-n", testNamespace, "-o", "jsonpath={.status.documentCount}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(BeEmpty(), "documentCount should be set")
+			}, 3*time.Minute).Should(Succeed())
+
+			By("verifying finalizer is present")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-cleanup-retain",
+					"-n", testNamespace, "-o", "jsonpath={.metadata.finalizers}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("dot-ai.devopstoolkit.live/finalizer"),
+					"Finalizer should be present")
+			}).Should(Succeed())
+
+			By("deleting the GitKnowledgeSource")
+			cmd = exec.Command("kubectl", "delete", "gitknowledgesource", "test-cleanup-retain", "-n", testNamespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete GitKnowledgeSource")
+
+			By("verifying the CR is fully deleted (finalizer completed without MCP delete)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-cleanup-retain",
+					"-n", testNamespace, "--ignore-not-found", "-o", "name")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(BeEmpty(), "CR should be deleted")
+			}, 2*time.Minute).Should(Succeed())
+		})
+	})
 })
 
 // deployMockKnowledgeServer deploys a mock knowledge server for testing GitKnowledgeSource

@@ -126,6 +126,18 @@ type DeleteResponse struct {
 	} `json:"error,omitempty"`
 }
 
+// DeleteBySourceResponse represents the response from a deleteBySource operation.
+type DeleteBySourceResponse struct {
+	Success bool `json:"success"`
+	Data    *struct {
+		SourceIdentifier string `json:"sourceIdentifier,omitempty"`
+		ChunksDeleted    int    `json:"chunksDeleted,omitempty"`
+	} `json:"data,omitempty"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
 // IngestDocument sends a document to the MCP knowledge base.
 // It returns the response and any error encountered.
 // The operation is retried with exponential backoff on transient failures.
@@ -178,6 +190,27 @@ func (c *MCPKnowledgeClient) DeleteDocument(ctx context.Context, uri string) (*D
 	return &resp, nil
 }
 
+// DeleteBySource removes all documents with a given sourceIdentifier from MCP.
+// The deleteURL should be the full URL including the encoded sourceIdentifier.
+// Example: http://mcp-server:3456/api/v1/knowledge/source/default%2Fplatform-docs
+// This is idempotent - deleting non-existent source succeeds with chunksDeleted=0.
+func (c *MCPKnowledgeClient) DeleteBySource(ctx context.Context, deleteURL string) (*DeleteBySourceResponse, error) {
+	var resp DeleteBySourceResponse
+	if err := c.doDeleteRequestWithRetry(ctx, deleteURL, &resp); err != nil {
+		return nil, err
+	}
+
+	if !resp.Success {
+		errMsg := "unknown error"
+		if resp.Error != nil && resp.Error.Message != "" {
+			errMsg = resp.Error.Message
+		}
+		return &resp, fmt.Errorf("MCP deleteBySource failed: %s", errMsg)
+	}
+
+	return &resp, nil
+}
+
 // doRequestWithRetry performs an HTTP POST request with retry logic.
 func (c *MCPKnowledgeClient) doRequestWithRetry(ctx context.Context, reqBody interface{}, respBody interface{}) error {
 	var lastErr error
@@ -221,6 +254,74 @@ func (c *MCPKnowledgeClient) doRequest(ctx context.Context, reqBody interface{},
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check for HTTP-level errors
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("server error (HTTP %d): %s", resp.StatusCode, string(respBytes))
+	}
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("client error (HTTP %d): %s", resp.StatusCode, string(respBytes))
+	}
+
+	if err := json.Unmarshal(respBytes, respBody); err != nil {
+		return fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return nil
+}
+
+// doDeleteRequestWithRetry performs an HTTP DELETE request with retry logic.
+func (c *MCPKnowledgeClient) doDeleteRequestWithRetry(ctx context.Context, url string, respBody interface{}) error {
+	var lastErr error
+
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := c.calculateBackoff(attempt)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		err := c.doDeleteRequest(ctx, url, respBody)
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+
+		// Don't retry on context cancellation
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+
+	return fmt.Errorf("MCP DELETE request failed after %d attempts: %w", c.maxRetries+1, lastErr)
+}
+
+// doDeleteRequest performs a single HTTP DELETE request.
+func (c *MCPKnowledgeClient) doDeleteRequest(ctx context.Context, url string, respBody interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
 	if c.authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.authToken)
 	}

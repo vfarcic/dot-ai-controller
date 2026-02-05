@@ -65,6 +65,16 @@ spec:
           spec:
             description: GitKnowledgeSourceSpec defines the desired state of GitKnowledgeSource
             properties:
+              deletionPolicy:
+                default: Delete
+                description: |-
+                  DeletionPolicy specifies what happens to ingested documents when this CR is deleted.
+                  Delete (default): Documents are removed from MCP knowledge base.
+                  Retain: Documents remain in MCP knowledge base.
+                enum:
+                - Delete
+                - Retain
+                type: string
               exclude:
                 description: |-
                   Exclude specifies glob patterns for files to exclude

@@ -206,9 +206,10 @@ func TestGitKnowledgeSourceReconciler_Reconcile_MissingMCPSecret(t *testing.T) {
 
 	gks := &dotaiv1alpha1.GitKnowledgeSource{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-gks",
-			Namespace: "default",
-			UID:       types.UID("test-uid-12345678"),
+			Name:       "test-gks",
+			Namespace:  "default",
+			UID:        types.UID("test-uid-12345678"),
+			Finalizers: []string{GitKnowledgeSourceFinalizer}, // Pre-add finalizer to test sync logic
 		},
 		Spec: dotaiv1alpha1.GitKnowledgeSourceSpec{
 			Repository: dotaiv1alpha1.RepositoryConfig{
@@ -301,6 +302,7 @@ func TestGitKnowledgeSourceReconciler_Reconcile_Success(t *testing.T) {
 			Namespace:  "default",
 			UID:        types.UID("test-uid-12345678"),
 			Generation: 1,
+			Finalizers: []string{GitKnowledgeSourceFinalizer}, // Pre-add finalizer to test sync logic
 		},
 		Spec: dotaiv1alpha1.GitKnowledgeSourceSpec{
 			Repository: dotaiv1alpha1.RepositoryConfig{
@@ -429,6 +431,7 @@ func TestGitKnowledgeSourceReconciler_Reconcile_InvalidSchedule(t *testing.T) {
 			Namespace:  "default",
 			UID:        types.UID("test-uid-invalid"),
 			Generation: 1,
+			Finalizers: []string{GitKnowledgeSourceFinalizer}, // Pre-add finalizer to test sync logic
 		},
 		Spec: dotaiv1alpha1.GitKnowledgeSourceSpec{
 			Repository: dotaiv1alpha1.RepositoryConfig{
@@ -512,6 +515,7 @@ func TestGitKnowledgeSourceReconciler_Reconcile_ConcurrentSyncPrevention(t *test
 			Namespace:  "default",
 			UID:        types.UID("test-uid-concurrent"),
 			Generation: 1,
+			Finalizers: []string{GitKnowledgeSourceFinalizer}, // Pre-add finalizer to test lock logic
 		},
 		Spec: dotaiv1alpha1.GitKnowledgeSourceSpec{
 			Repository: dotaiv1alpha1.RepositoryConfig{

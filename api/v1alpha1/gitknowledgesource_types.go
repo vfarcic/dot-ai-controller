@@ -4,6 +4,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// DeletionPolicy specifies what happens to documents in MCP when the CR is deleted
+// +kubebuilder:validation:Enum=Delete;Retain
+type DeletionPolicy string
+
+const (
+	// DeletionPolicyDelete removes documents from MCP when CR is deleted (default)
+	DeletionPolicyDelete DeletionPolicy = "Delete"
+	// DeletionPolicyRetain keeps documents in MCP when CR is deleted
+	DeletionPolicyRetain DeletionPolicy = "Retain"
+)
+
 // GitKnowledgeSourceSpec defines the desired state of GitKnowledgeSource
 type GitKnowledgeSourceSpec struct {
 	// Repository defines the Git repository to sync documents from
@@ -40,6 +51,13 @@ type GitKnowledgeSourceSpec struct {
 	// Files larger than this are skipped and reported in status
 	// +optional
 	MaxFileSizeBytes *int64 `json:"maxFileSizeBytes,omitempty"`
+
+	// DeletionPolicy specifies what happens to ingested documents when this CR is deleted.
+	// Delete (default): Documents are removed from MCP knowledge base.
+	// Retain: Documents remain in MCP knowledge base.
+	// +kubebuilder:default=Delete
+	// +optional
+	DeletionPolicy DeletionPolicy `json:"deletionPolicy,omitempty"`
 }
 
 // RepositoryConfig defines the Git repository configuration

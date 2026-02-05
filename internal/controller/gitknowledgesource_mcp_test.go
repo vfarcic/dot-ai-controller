@@ -340,3 +340,173 @@ func TestMCPKnowledgeClient_HTTP4xxError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "client error (HTTP 400)")
 }
+
+func TestMCPKnowledgeClient_DeleteBySource_Success(t *testing.T) {
+	var receivedMethod string
+	var receivedRawPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		// Use RawPath to verify URL encoding is preserved in the request
+		// (Path is automatically decoded by Go's http package)
+		receivedRawPath = r.URL.RawPath
+
+		resp := DeleteBySourceResponse{
+			Success: true,
+			Data: &struct {
+				SourceIdentifier string `json:"sourceIdentifier,omitempty"`
+				ChunksDeleted    int    `json:"chunksDeleted,omitempty"`
+			}{
+				SourceIdentifier: "default/platform-docs",
+				ChunksDeleted:    42,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewMCPKnowledgeClient(MCPKnowledgeClientConfig{
+		Endpoint:   server.URL,
+		HTTPClient: server.Client(),
+	})
+
+	ctx := context.Background()
+	deleteURL := server.URL + "/api/v1/knowledge/source/default%2Fplatform-docs"
+	resp, err := client.DeleteBySource(ctx, deleteURL)
+
+	require.NoError(t, err)
+	assert.Equal(t, "DELETE", receivedMethod)
+	// RawPath preserves the %2F encoding
+	assert.Equal(t, "/api/v1/knowledge/source/default%2Fplatform-docs", receivedRawPath)
+	assert.True(t, resp.Success)
+	assert.NotNil(t, resp.Data)
+	assert.Equal(t, 42, resp.Data.ChunksDeleted)
+}
+
+func TestMCPKnowledgeClient_DeleteBySource_NonExistent(t *testing.T) {
+	// Deleting a non-existent source should succeed (idempotent)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := DeleteBySourceResponse{
+			Success: true,
+			Data: &struct {
+				SourceIdentifier string `json:"sourceIdentifier,omitempty"`
+				ChunksDeleted    int    `json:"chunksDeleted,omitempty"`
+			}{
+				SourceIdentifier: "default/nonexistent",
+				ChunksDeleted:    0,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewMCPKnowledgeClient(MCPKnowledgeClientConfig{
+		Endpoint:   server.URL,
+		HTTPClient: server.Client(),
+	})
+
+	ctx := context.Background()
+	deleteURL := server.URL + "/api/v1/knowledge/source/default%2Fnonexistent"
+	resp, err := client.DeleteBySource(ctx, deleteURL)
+
+	require.NoError(t, err)
+	assert.True(t, resp.Success)
+	assert.NotNil(t, resp.Data)
+	assert.Equal(t, 0, resp.Data.ChunksDeleted)
+}
+
+func TestMCPKnowledgeClient_DeleteBySource_RetryOnServerError(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("Service Unavailable"))
+			return
+		}
+
+		resp := DeleteBySourceResponse{
+			Success: true,
+			Data: &struct {
+				SourceIdentifier string `json:"sourceIdentifier,omitempty"`
+				ChunksDeleted    int    `json:"chunksDeleted,omitempty"`
+			}{
+				ChunksDeleted: 10,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewMCPKnowledgeClient(MCPKnowledgeClientConfig{
+		Endpoint:       server.URL,
+		HTTPClient:     server.Client(),
+		MaxRetries:     ptr.To(3),
+		InitialBackoff: 10 * time.Millisecond,
+		MaxBackoff:     50 * time.Millisecond,
+	})
+
+	ctx := context.Background()
+	deleteURL := server.URL + "/api/v1/knowledge/source/default%2Ftest"
+	resp, err := client.DeleteBySource(ctx, deleteURL)
+
+	require.NoError(t, err)
+	assert.True(t, resp.Success)
+	assert.Equal(t, 3, attempts, "Expected 3 attempts (2 failures + 1 success)")
+}
+
+func TestMCPKnowledgeClient_DeleteBySource_AuthHeader(t *testing.T) {
+	var receivedAuthHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuthHeader = r.Header.Get("Authorization")
+		resp := DeleteBySourceResponse{Success: true}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewMCPKnowledgeClient(MCPKnowledgeClientConfig{
+		Endpoint:   server.URL,
+		HTTPClient: server.Client(),
+		AuthToken:  "delete-token-456",
+	})
+
+	ctx := context.Background()
+	deleteURL := server.URL + "/api/v1/knowledge/source/ns%2Fname"
+	_, err := client.DeleteBySource(ctx, deleteURL)
+
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer delete-token-456", receivedAuthHeader)
+}
+
+func TestMCPKnowledgeClient_DeleteBySource_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := DeleteBySourceResponse{
+			Success: false,
+			Error: &struct {
+				Message string `json:"message"`
+			}{
+				Message: "Internal error during deletion",
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewMCPKnowledgeClient(MCPKnowledgeClientConfig{
+		Endpoint:   server.URL,
+		HTTPClient: server.Client(),
+		MaxRetries: ptr.To(0),
+	})
+
+	ctx := context.Background()
+	deleteURL := server.URL + "/api/v1/knowledge/source/ns%2Fname"
+	resp, err := client.DeleteBySource(ctx, deleteURL)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Internal error during deletion")
+	assert.NotNil(t, resp)
+	assert.False(t, resp.Success)
+}

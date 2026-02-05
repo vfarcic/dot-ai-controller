@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	dotaiv1alpha1 "github.com/vfarcic/dot-ai-controller/api/v1alpha1"
@@ -33,6 +34,9 @@ const (
 	SyncTimeout = 30 * time.Minute
 	// SyncInProgressRequeueAfter is how long to wait before retrying when sync is in progress
 	SyncInProgressRequeueAfter = 30 * time.Second
+
+	// GitKnowledgeSourceFinalizer is the finalizer used for cleanup on deletion
+	GitKnowledgeSourceFinalizer = "dot-ai.devopstoolkit.live/finalizer"
 )
 
 // syncLocks tracks active syncs per GitKnowledgeSource to prevent concurrent syncs
@@ -71,6 +75,38 @@ func (r *GitKnowledgeSourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if err := r.Get(ctx, req.NamespacedName, &gks); err != nil {
 		// Not found - likely deleted, nothing to do
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Handle deletion
+	if !gks.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(&gks, GitKnowledgeSourceFinalizer) {
+			// Perform cleanup based on deletion policy
+			if err := r.handleDeletion(ctx, &gks); err != nil {
+				logger.Error(err, "Failed to handle deletion")
+				return ctrl.Result{}, err
+			}
+
+			// Remove finalizer
+			controllerutil.RemoveFinalizer(&gks, GitKnowledgeSourceFinalizer)
+			if err := r.Update(ctx, &gks); err != nil {
+				logger.Error(err, "Failed to remove finalizer")
+				return ctrl.Result{}, err
+			}
+			logger.Info("Finalizer removed, deletion complete")
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Add finalizer if not present
+	if !controllerutil.ContainsFinalizer(&gks, GitKnowledgeSourceFinalizer) {
+		controllerutil.AddFinalizer(&gks, GitKnowledgeSourceFinalizer)
+		if err := r.Update(ctx, &gks); err != nil {
+			logger.Error(err, "Failed to add finalizer")
+			return ctrl.Result{}, err
+		}
+		logger.Info("Finalizer added")
+		// Requeue to continue with sync
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Try to acquire lock for this CR to prevent concurrent syncs
@@ -122,6 +158,72 @@ func (r *GitKnowledgeSourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 func (r *GitKnowledgeSourceReconciler) getOrCreateLock(key string) *sync.Mutex {
 	lock, _ := syncLocks.LoadOrStore(key, &sync.Mutex{})
 	return lock.(*sync.Mutex)
+}
+
+// handleDeletion handles cleanup when a GitKnowledgeSource is being deleted.
+// Based on the deletionPolicy, it either deletes documents from MCP or retains them.
+func (r *GitKnowledgeSourceReconciler) handleDeletion(ctx context.Context, gks *dotaiv1alpha1.GitKnowledgeSource) error {
+	logger := logf.FromContext(ctx)
+
+	// Check deletion policy - default to Delete if not specified
+	policy := gks.Spec.DeletionPolicy
+	if policy == "" {
+		policy = dotaiv1alpha1.DeletionPolicyDelete
+	}
+
+	if policy == dotaiv1alpha1.DeletionPolicyRetain {
+		logger.Info("DeletionPolicy is Retain, documents will remain in MCP knowledge base",
+			"sourceIdentifier", fmt.Sprintf("%s/%s", gks.Namespace, gks.Name),
+		)
+		r.Recorder.Event(gks, corev1.EventTypeNormal, "DocumentsRetained",
+			"Documents retained in MCP knowledge base per deletionPolicy")
+		return nil
+	}
+
+	// Policy is Delete - remove documents from MCP
+	logger.Info("DeletionPolicy is Delete, removing documents from MCP",
+		"sourceIdentifier", fmt.Sprintf("%s/%s", gks.Namespace, gks.Name),
+	)
+
+	// Get MCP auth token
+	mcpAuthToken, err := r.getSecretValue(ctx, gks.Namespace, &gks.Spec.McpServer.AuthSecretRef)
+	if err != nil {
+		// If secret is not found, we can't delete from MCP but should still allow CR deletion
+		logger.Error(err, "Failed to get MCP auth token, cannot delete documents from MCP")
+		r.Recorder.Eventf(gks, corev1.EventTypeWarning, "CleanupWarning",
+			"Could not delete documents from MCP: %v", err)
+		return nil // Don't block deletion
+	}
+
+	// Build the delete URL
+	sourceIdentifier := fmt.Sprintf("%s/%s", gks.Namespace, gks.Name)
+	baseURL := strings.TrimSuffix(gks.Spec.McpServer.URL, "/")
+	deleteURL := fmt.Sprintf("%s/api/v1/knowledge/source/%s", baseURL, url.PathEscape(sourceIdentifier))
+
+	// Create MCP client and delete documents
+	mcpClient := NewMCPKnowledgeClient(MCPKnowledgeClientConfig{
+		Endpoint:  deleteURL, // Not used by DeleteBySource but needed for client creation
+		AuthToken: mcpAuthToken,
+	})
+
+	resp, err := mcpClient.DeleteBySource(ctx, deleteURL)
+	if err != nil {
+		logger.Error(err, "Failed to delete documents from MCP")
+		r.Recorder.Eventf(gks, corev1.EventTypeWarning, "CleanupWarning",
+			"Could not delete documents from MCP: %v", err)
+		// Don't block CR deletion on MCP errors
+		return nil
+	}
+
+	chunksDeleted := 0
+	if resp.Data != nil {
+		chunksDeleted = resp.Data.ChunksDeleted
+	}
+	logger.Info("Documents deleted from MCP", "chunksDeleted", chunksDeleted)
+	r.Recorder.Eventf(gks, corev1.EventTypeNormal, "DocumentsDeleted",
+		"Deleted %d chunks from MCP knowledge base", chunksDeleted)
+
+	return nil
 }
 
 // doSync performs the actual sync operation.
