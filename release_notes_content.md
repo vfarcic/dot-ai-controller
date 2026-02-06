@@ -1,10 +1,14 @@
 
-### Bug Fixes
+### Features
 
-- **Fix Infinite Reconciliation Loop When Status Exceeds etcd Size Limit**
+- ## GitKnowledgeSource CRD
 
-  Resolves an issue where the ResourceSyncConfig controller would enter an infinite reconciliation loop when the status object grew too large, exceeding etcd's 3MB object size limit. This caused massive CPU usage and log flooding as the controller repeatedly attempted status updates that could never succeed.
+  Automatically sync documentation from Git repositories to the MCP knowledge base. Previously, users had to manually ingest documents or build custom tooling to keep their knowledge base current with repository changes.
 
-  The controller now caps the `SyncErrors` counter at 100,000 to prevent unbounded growth and truncates error messages to 1KB maximum. When status updates fail due to "entity too large" errors, the controller enters a 5-minute backoff period instead of retrying immediately. All status fields are sanitized before each update to ensure they fit within etcd limits.
+  The new `GitKnowledgeSource` CRD provides a declarative way to specify Git repositories and file patterns for ingestion. The controller clones repositories, matches files using glob patterns (e.g., `docs/**/*.md`), and syncs them to MCP. Change detection ensures only modified files are processed on subsequent syncs, making it efficient for large repositories. Scheduled sync supports both cron expressions (`0 3 * * *`) and intervals (`@every 24h`), with a default of daily syncs staggered across resources to avoid thundering herd issues.
 
-  If you encounter this issue before upgrading, the workaround is to delete and recreate the affected ResourceSyncConfig to reset its status. ([#42](https://github.com/vfarcic/dot-ai-controller/issues/42))
+  Key capabilities include private repository support via token authentication, file size filtering with `maxFileSizeBytes` to skip large generated files, and detailed status reporting showing document counts, skipped files, and sync errors. The `deletionPolicy` field controls whether documents are removed from MCP when the CR is deleted (default: Delete) or retained for migration scenarios.
+
+  Configure a knowledge source by creating a CR with the repository URL, branch, file patterns, and MCP server endpoint. The controller handles cloning, change detection, and cleanup automatically.
+
+  See the [Knowledge Source Guide](https://devopstoolkit.ai/docs/controller/knowledge-source-guide) for configuration details and examples. ([#44](https://github.com/vfarcic/dot-ai-controller/issues/44))
