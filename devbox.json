@@ -15,11 +15,7 @@
   ],
   "shell": {
     "init_hook": [
-      "export PATH=$PATH:$HOME/.npm-global/bin",
-      "export CC=/usr/bin/clang",
-      "export CXX=/usr/bin/clang++",
-      "unset SDKROOT",
-      "unset DEVELOPER_DIR",
+      "export PATH=\"$HOME/.local/bin:$PATH\"",
       "[ -n \"$USE_VALS\" ] && eval \"$(vals env -export -f .env.vals.yaml)\" || true",
       "[ -f .env ] && source .env || true"
     ],
