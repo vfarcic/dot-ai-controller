@@ -263,6 +263,12 @@ func TestGitKnowledgeSourceReconciler_Reconcile_MissingMCPSecret(t *testing.T) {
 	default:
 		t.Error("Expected MCPAuthError event")
 	}
+
+	// Check phase is Error
+	var updated dotaiv1alpha1.GitKnowledgeSource
+	err = r.Get(ctx, req.NamespacedName, &updated)
+	require.NoError(t, err)
+	assert.Equal(t, "Error", updated.Status.Phase)
 }
 
 func TestGitKnowledgeSourceReconciler_Reconcile_Success(t *testing.T) {
@@ -358,6 +364,7 @@ func TestGitKnowledgeSourceReconciler_Reconcile_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, updated.Status.Active)
+	assert.Equal(t, "Synced", updated.Status.Phase)
 	assert.NotNil(t, updated.Status.LastSyncTime)
 	assert.NotEmpty(t, updated.Status.LastSyncedCommit)
 	assert.GreaterOrEqual(t, updated.Status.DocumentCount, 0)
@@ -485,6 +492,7 @@ func TestGitKnowledgeSourceReconciler_Reconcile_InvalidSchedule(t *testing.T) {
 
 	// Sync should still happen
 	assert.True(t, updated.Status.Active)
+	assert.Equal(t, "Synced", updated.Status.Phase)
 	assert.NotNil(t, updated.Status.LastSyncTime)
 	// But NextScheduledSync should be nil
 	assert.Nil(t, updated.Status.NextScheduledSync, "NextScheduledSync should be nil for invalid schedule")
