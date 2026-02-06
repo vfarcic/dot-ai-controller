@@ -1,8 +1,8 @@
 
-### Features
+### Bug Fixes
 
-- ## GitKnowledgeSource Sync Phase Visibility
+- ## Fix GitKnowledgeSource Continuous Sync Loop
 
-  GitKnowledgeSource now shows a `Phase` column in `kubectl get gks` output, providing immediate feedback on sync status. Previously, the status only updated after the entire sync completed, leaving users unable to tell whether a configuration fix was picked up.
+  GitKnowledgeSource no longer syncs continuously in a tight loop. Previously, every status update triggered a new reconcile, causing the controller to re-clone and re-sync the repository non-stop instead of waiting for the configured schedule.
 
-  The Phase field transitions through `Syncing`, `Synced`, and `Error` states. When reconciliation starts, the phase is set to `Syncing` and persisted immediately — before cloning or ingesting documents — so users see progress right away. On completion it moves to `Synced`, or `Error` if any issues occurred (authentication failures, clone errors, partial sync failures). ([#46](https://github.com/vfarcic/dot-ai-controller/issues/46))
+  The controller now uses `GenerationChangedPredicate` to only reconcile on spec changes. Scheduled syncs via cron or interval expressions continue to work as configured. ([#48](https://github.com/vfarcic/dot-ai-controller/issues/48))

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- towncrier release notes start -->
 
+## [0.47.0] - 2026-02-06
+
+### Bug Fixes
+
+- ## Fix GitKnowledgeSource Continuous Sync Loop
+
+  GitKnowledgeSource no longer syncs continuously in a tight loop. Previously, every status update triggered a new reconcile, causing the controller to re-clone and re-sync the repository non-stop instead of waiting for the configured schedule.
+
+  The controller now uses `GenerationChangedPredicate` to only reconcile on spec changes. Scheduled syncs via cron or interval expressions continue to work as configured. ([#48](https://github.com/vfarcic/dot-ai-controller/issues/48))
+
+
 ## [0.46.0] - 2026-02-06
 
 ### Features
