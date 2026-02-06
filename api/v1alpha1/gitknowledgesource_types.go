@@ -15,6 +15,15 @@ const (
 	DeletionPolicyRetain DeletionPolicy = "Retain"
 )
 
+// GitKnowledgeSourcePhase describes the current sync phase
+type GitKnowledgeSourcePhase string
+
+const (
+	PhaseSyncing GitKnowledgeSourcePhase = "Syncing"
+	PhaseSynced  GitKnowledgeSourcePhase = "Synced"
+	PhaseError   GitKnowledgeSourcePhase = "Error"
+)
+
 // GitKnowledgeSourceSpec defines the desired state of GitKnowledgeSource
 type GitKnowledgeSourceSpec struct {
 	// Repository defines the Git repository to sync documents from
@@ -92,9 +101,9 @@ type GitKnowledgeSourceStatus struct {
 	// +optional
 	Active bool `json:"active,omitempty"`
 
-	// Phase indicates the current sync phase (Pending, Syncing, Synced, Error)
+	// Phase indicates the current sync phase (Syncing, Synced, Error)
 	// +optional
-	Phase string `json:"phase,omitempty"`
+	Phase GitKnowledgeSourcePhase `json:"phase,omitempty"`
 
 	// LastSyncTime is the timestamp of the last successful sync
 	// +optional
