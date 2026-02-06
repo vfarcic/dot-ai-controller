@@ -1,14 +1,8 @@
 
 ### Features
 
-- ## GitKnowledgeSource CRD
+- ## GitKnowledgeSource Sync Phase Visibility
 
-  Automatically sync documentation from Git repositories to the MCP knowledge base. Previously, users had to manually ingest documents or build custom tooling to keep their knowledge base current with repository changes.
+  GitKnowledgeSource now shows a `Phase` column in `kubectl get gks` output, providing immediate feedback on sync status. Previously, the status only updated after the entire sync completed, leaving users unable to tell whether a configuration fix was picked up.
 
-  The new `GitKnowledgeSource` CRD provides a declarative way to specify Git repositories and file patterns for ingestion. The controller clones repositories, matches files using glob patterns (e.g., `docs/**/*.md`), and syncs them to MCP. Change detection ensures only modified files are processed on subsequent syncs, making it efficient for large repositories. Scheduled sync supports both cron expressions (`0 3 * * *`) and intervals (`@every 24h`), with a default of daily syncs staggered across resources to avoid thundering herd issues.
-
-  Key capabilities include private repository support via token authentication, file size filtering with `maxFileSizeBytes` to skip large generated files, and detailed status reporting showing document counts, skipped files, and sync errors. The `deletionPolicy` field controls whether documents are removed from MCP when the CR is deleted (default: Delete) or retained for migration scenarios.
-
-  Configure a knowledge source by creating a CR with the repository URL, branch, file patterns, and MCP server endpoint. The controller handles cloning, change detection, and cleanup automatically.
-
-  See the [Knowledge Source Guide](https://devopstoolkit.ai/docs/controller/knowledge-source-guide) for configuration details and examples. ([#44](https://github.com/vfarcic/dot-ai-controller/issues/44))
+  The Phase field transitions through `Syncing`, `Synced`, and `Error` states. When reconciliation starts, the phase is set to `Syncing` and persisted immediately — before cloning or ingesting documents — so users see progress right away. On completion it moves to `Synced`, or `Error` if any issues occurred (authentication failures, clone errors, partial sync failures). ([#46](https://github.com/vfarcic/dot-ai-controller/issues/46))

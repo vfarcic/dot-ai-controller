@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- towncrier release notes start -->
 
+## [0.46.0] - 2026-02-06
+
+### Features
+
+- ## GitKnowledgeSource Sync Phase Visibility
+
+  GitKnowledgeSource now shows a `Phase` column in `kubectl get gks` output, providing immediate feedback on sync status. Previously, the status only updated after the entire sync completed, leaving users unable to tell whether a configuration fix was picked up.
+
+  The Phase field transitions through `Syncing`, `Synced`, and `Error` states. When reconciliation starts, the phase is set to `Syncing` and persisted immediately — before cloning or ingesting documents — so users see progress right away. On completion it moves to `Synced`, or `Error` if any issues occurred (authentication failures, clone errors, partial sync failures). ([#46](https://github.com/vfarcic/dot-ai-controller/issues/46))
+
+
 ## [0.45.0] - 2026-02-06
 
 ### Features
