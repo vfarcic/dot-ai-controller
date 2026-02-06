@@ -130,8 +130,12 @@ func (r *GitKnowledgeSourceReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Check if spec changed (for full sync decision)
 	specChanged := gks.Generation != gks.Status.ObservedGeneration
 
-	// Update observed generation before sync
-	gks.Status.ObservedGeneration = gks.Generation
+	// Set phase to Syncing and persist immediately so users see progress
+	gks.Status.Phase = dotaiv1alpha1.PhaseSyncing
+	if statusErr := r.Status().Update(ctx, &gks); statusErr != nil {
+		logger.Error(statusErr, "Failed to update syncing status")
+		return ctrl.Result{}, statusErr
+	}
 
 	// Apply sync timeout
 	syncCtx, cancel := context.WithTimeout(ctx, SyncTimeout)
@@ -422,6 +426,7 @@ processFiles:
 
 	// Update status
 	now := metav1.Now()
+	gks.Status.ObservedGeneration = gks.Generation
 	gks.Status.LastSyncTime = &now
 	gks.Status.LastSyncedCommit = headCommit
 	gks.Status.DocumentCount += documentCount // Increment with files processed in this sync
@@ -433,13 +438,15 @@ processFiles:
 		gks.Status.SkippedFiles = skippedFiles
 	}
 
-	// Set condition based on results
+	// Set condition and phase based on results
 	if syncErrors == 0 {
+		gks.Status.Phase = dotaiv1alpha1.PhaseSynced
 		r.setSyncedCondition(gks, true, "SyncComplete",
 			fmt.Sprintf("Successfully synced %d documents", documentCount))
 		r.Recorder.Eventf(gks, corev1.EventTypeNormal, "SyncComplete",
 			"Synced %d documents from %s", documentCount, gks.Spec.Repository.URL)
 	} else {
+		gks.Status.Phase = dotaiv1alpha1.PhaseError
 		r.setSyncedCondition(gks, false, "SyncPartial",
 			fmt.Sprintf("Synced %d documents with %d errors", documentCount, syncErrors))
 		r.Recorder.Eventf(gks, corev1.EventTypeWarning, "SyncPartial",
@@ -525,6 +532,7 @@ func (r *GitKnowledgeSourceReconciler) setErrorCondition(gks *dotaiv1alpha1.GitK
 		Reason:             reason,
 		Message:            message,
 	})
+	gks.Status.Phase = dotaiv1alpha1.PhaseError
 	gks.Status.LastError = message
 }
 

@@ -17,6 +17,10 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - description: Current sync phase
+      jsonPath: .status.phase
+      name: Phase
+      type: string
     - description: Whether sync is active
       jsonPath: .status.active
       name: Active
@@ -276,6 +280,10 @@ spec:
                   observed by the controller
                 format: int64
                 type: integer
+              phase:
+                description: Phase indicates the current sync phase (Syncing, Synced,
+                  Error)
+                type: string
               skippedDocuments:
                 description: SkippedDocuments is the count of documents skipped due
                   to filters

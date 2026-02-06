@@ -15,6 +15,15 @@ const (
 	DeletionPolicyRetain DeletionPolicy = "Retain"
 )
 
+// GitKnowledgeSourcePhase describes the current sync phase
+type GitKnowledgeSourcePhase string
+
+const (
+	PhaseSyncing GitKnowledgeSourcePhase = "Syncing"
+	PhaseSynced  GitKnowledgeSourcePhase = "Synced"
+	PhaseError   GitKnowledgeSourcePhase = "Error"
+)
+
 // GitKnowledgeSourceSpec defines the desired state of GitKnowledgeSource
 type GitKnowledgeSourceSpec struct {
 	// Repository defines the Git repository to sync documents from
@@ -92,6 +101,10 @@ type GitKnowledgeSourceStatus struct {
 	// +optional
 	Active bool `json:"active,omitempty"`
 
+	// Phase indicates the current sync phase (Syncing, Synced, Error)
+	// +optional
+	Phase GitKnowledgeSourcePhase `json:"phase,omitempty"`
+
 	// LastSyncTime is the timestamp of the last successful sync
 	// +optional
 	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
@@ -140,6 +153,7 @@ type GitKnowledgeSourceStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=gks
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`,description="Current sync phase"
 // +kubebuilder:printcolumn:name="Active",type=boolean,JSONPath=`.status.active`,description="Whether sync is active"
 // +kubebuilder:printcolumn:name="Documents",type=integer,JSONPath=`.status.documentCount`,description="Number of synced documents"
 // +kubebuilder:printcolumn:name="Last Sync",type=date,JSONPath=`.status.lastSyncTime`,description="Time of last sync"
