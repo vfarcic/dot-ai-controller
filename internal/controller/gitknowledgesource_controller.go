@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	dotaiv1alpha1 "github.com/vfarcic/dot-ai-controller/api/v1alpha1"
 )
@@ -616,6 +617,7 @@ func BuildDocumentURI(repoURL, branch, filePath string) string {
 func (r *GitKnowledgeSourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&dotaiv1alpha1.GitKnowledgeSource{}).
+		WithEventFilter(predicate.GenerationChangedPredicate{}).
 		Named("gitknowledgesource").
 		Complete(r)
 }
