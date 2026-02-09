@@ -111,6 +111,14 @@ spec:
                     - key
                     - name
                     type: object
+                  httpTimeoutSeconds:
+                    default: 120
+                    description: |-
+                      HttpTimeoutSeconds is the HTTP timeout in seconds for MCP API calls
+                      Increase this if syncing large documents that take longer to process
+                    maximum: 600
+                    minimum: 5
+                    type: integer
                   url:
                     description: |-
                       URL is the MCP server endpoint

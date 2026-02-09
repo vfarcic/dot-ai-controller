@@ -213,6 +213,7 @@ func (r *GitKnowledgeSourceReconciler) handleDeletion(ctx context.Context, gks *
 	mcpClient := NewMCPKnowledgeClient(MCPKnowledgeClientConfig{
 		Endpoint:  deleteURL, // Not used by DeleteBySource but needed for client creation
 		AuthToken: mcpAuthToken,
+		Timeout:   time.Duration(gks.Spec.McpServer.HttpTimeoutSeconds) * time.Second,
 	})
 
 	resp, err := mcpClient.DeleteBySource(ctx, deleteURL)
@@ -366,6 +367,7 @@ processFiles:
 	mcpClient := NewMCPKnowledgeClient(MCPKnowledgeClientConfig{
 		Endpoint:  mcpEndpoint,
 		AuthToken: mcpAuthToken,
+		Timeout:   time.Duration(gks.Spec.McpServer.HttpTimeoutSeconds) * time.Second,
 	})
 
 	// M7: Build metadata with sourceIdentifier for MCP bulk operations

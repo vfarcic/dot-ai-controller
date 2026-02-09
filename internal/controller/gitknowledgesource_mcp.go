@@ -19,7 +19,7 @@ const (
 	// DefaultMCPMaxBackoff is the default maximum backoff duration
 	DefaultMCPMaxBackoff = 30 * time.Second
 	// DefaultMCPTimeout is the default HTTP timeout for MCP calls
-	DefaultMCPTimeout = 30 * time.Second
+	DefaultMCPTimeout = 120 * time.Second
 )
 
 // MCPKnowledgeClientConfig holds the configuration for creating an MCPKnowledgeClient.
@@ -37,6 +37,8 @@ type MCPKnowledgeClientConfig struct {
 	InitialBackoff time.Duration
 	// MaxBackoff is the maximum backoff duration (optional, default: 30s)
 	MaxBackoff time.Duration
+	// Timeout is the HTTP timeout duration (optional, default: 120s)
+	Timeout time.Duration
 }
 
 // MCPKnowledgeClient handles communication with the MCP manageKnowledge API.
@@ -68,8 +70,12 @@ func NewMCPKnowledgeClient(cfg MCPKnowledgeClientConfig) *MCPKnowledgeClient {
 
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
+		timeout := cfg.Timeout
+		if timeout == 0 {
+			timeout = DefaultMCPTimeout
+		}
 		httpClient = &http.Client{
-			Timeout: DefaultMCPTimeout,
+			Timeout: timeout,
 		}
 	}
 

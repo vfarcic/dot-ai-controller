@@ -69,8 +69,8 @@ spec:
 
 ## Milestones
 
-- [ ] **M1: Add configurable timeout** - Add `httpTimeoutSeconds` to `McpServerConfig`, update default to 120s, wire through controller, update tests, run `make generate manifests`
-- [ ] **M2: Documentation** - Update CLAUDE.md and user docs with new field
+- [x] **M1: Add configurable timeout** - Add `httpTimeoutSeconds` to `McpServerConfig`, update default to 120s, wire through controller, update tests, run `make generate manifests`
+- [x] **M2: Documentation** - Update CLAUDE.md and user docs with new field
 
 ## Out of Scope
 
