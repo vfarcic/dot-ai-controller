@@ -1,5 +1,7 @@
 # PRD #49: Configurable HTTP Timeout for GitKnowledgeSource MCP Calls
 
+**Status**: Complete (2026-02-09)
+
 ## Problem Statement
 
 The GitKnowledgeSource controller uses a hardcoded 30-second HTTP timeout (`DefaultMCPTimeout`) for MCP API calls. When ingesting large documents (e.g., 116KB markdown files), the MCP server can take up to 48 seconds to process and respond. This causes the HTTP client to timeout waiting for response headers, resulting in `SyncPartial` warnings and failed document ingestion.
