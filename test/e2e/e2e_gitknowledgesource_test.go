@@ -259,6 +259,7 @@ spec:
     branch: main
   paths:
     - "examples/docs/**/*.md"
+  schedule: "@every 30s"
   mcpServer:
     url: http://mock-knowledge-server.e2e-tests.svc.cluster.local:8080
     authSecretRef:
@@ -296,20 +297,18 @@ spec:
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "First sync: commit=%s, documentCount=%d\n", firstSyncCommit, firstDocCount)
 
-			By("recording the lastSyncTime before triggering re-sync")
+			By("recording the lastSyncTime before waiting for scheduled re-sync")
 			var firstSyncTime string
 			cmd = exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
 				"-n", testNamespace, "-o", "jsonpath={.status.lastSyncTime}")
 			firstSyncTime, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("triggering a re-sync by updating an annotation")
-			cmd = exec.Command("kubectl", "annotate", "gitknowledgesource", "test-change-detection",
-				"-n", testNamespace, "force-resync="+time.Now().Format(time.RFC3339), "--overwrite")
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to annotate GitKnowledgeSource")
-
-			By("waiting for re-sync to complete (lastSyncTime should change)")
+			By("waiting for scheduled re-sync to complete (lastSyncTime should change)")
+			// The schedule is set to @every 30s, so the controller will naturally
+			// requeue and re-sync without needing a spec change. This avoids using
+			// annotations (which don't trigger reconciliation due to GenerationChangedPredicate)
+			// and avoids spec changes (which would set specChanged=true and bypass change detection).
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "gitknowledgesource", "test-change-detection",
 					"-n", testNamespace, "-o", "jsonpath={.status.lastSyncTime}")

@@ -319,6 +319,31 @@ func TestNewMCPKnowledgeClient_Defaults(t *testing.T) {
 	assert.Equal(t, DefaultMCPInitialBackoff, client.initialBackoff)
 	assert.Equal(t, DefaultMCPMaxBackoff, client.maxBackoff)
 	assert.NotNil(t, client.httpClient)
+	assert.Equal(t, DefaultMCPTimeout, client.httpClient.Timeout)
+}
+
+func TestNewMCPKnowledgeClient_CustomTimeout(t *testing.T) {
+	client := NewMCPKnowledgeClient(MCPKnowledgeClientConfig{
+		Endpoint: "https://example.com/api/v1/tools/manageKnowledge",
+		Timeout:  180 * time.Second,
+	})
+
+	assert.Equal(t, 180*time.Second, client.httpClient.Timeout)
+}
+
+func TestNewMCPKnowledgeClient_CustomHTTPClientIgnoresTimeout(t *testing.T) {
+	customClient := &http.Client{Timeout: 60 * time.Second}
+	client := NewMCPKnowledgeClient(MCPKnowledgeClientConfig{
+		Endpoint:   "https://example.com/api/v1/tools/manageKnowledge",
+		HTTPClient: customClient,
+		Timeout:    300 * time.Second, // Should be ignored when HTTPClient is provided
+	})
+
+	assert.Equal(t, 60*time.Second, client.httpClient.Timeout)
+}
+
+func TestDefaultMCPTimeout_Is120Seconds(t *testing.T) {
+	assert.Equal(t, 120*time.Second, DefaultMCPTimeout)
 }
 
 func TestMCPKnowledgeClient_HTTP4xxError(t *testing.T) {

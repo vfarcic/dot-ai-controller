@@ -131,6 +131,7 @@ When a GitKnowledgeSource is deleted:
 | `schedule` | string | No | `@every 24h` | Sync schedule (cron or interval) |
 | `mcpServer.url` | string | Yes | - | MCP server endpoint URL |
 | `mcpServer.authSecretRef` | SecretReference | Yes | - | Secret with MCP auth token |
+| `mcpServer.httpTimeoutSeconds` | int | No | `120` | HTTP timeout in seconds for MCP API calls (min: 5, max: 600) |
 | `metadata` | map[string]string | No | - | Custom metadata attached to all documents |
 | `maxFileSizeBytes` | int | No | - | Skip files larger than this size |
 | `deletionPolicy` | string | No | `Delete` | `Delete` or `Retain` documents on CR deletion |

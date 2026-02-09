@@ -14,6 +14,14 @@ type McpServerConfig struct {
 	// AuthSecretRef references a Secret containing the MCP authentication token
 	// +kubebuilder:validation:Required
 	AuthSecretRef SecretReference `json:"authSecretRef"`
+
+	// HttpTimeoutSeconds is the HTTP timeout in seconds for MCP API calls
+	// Increase this if syncing large documents that take longer to process
+	// +kubebuilder:default=120
+	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Maximum=600
+	// +optional
+	HttpTimeoutSeconds int `json:"httpTimeoutSeconds,omitempty"`
 }
 
 // SkippedFile represents a file or document that was skipped during sync
