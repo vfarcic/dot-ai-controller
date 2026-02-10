@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- towncrier release notes start -->
 
+## [0.48.0] - 2026-02-10
+
+### Features
+
+- ## Configurable HTTP Timeout for MCP Calls
+
+  GitKnowledgeSource now supports a configurable HTTP timeout for MCP API calls via `spec.mcpServer.httpTimeoutSeconds`. Previously, a hardcoded 30-second timeout caused large documents (100KB+) to fail ingestion when the MCP server needed more processing time, resulting in `SyncPartial` warnings and incomplete syncs.
+
+  The default timeout is now 120 seconds, which handles typical large documents without user intervention. For repositories with very large files, the timeout can be increased up to 600 seconds. A minimum of 5 seconds is enforced via CRD validation.
+
+  ```yaml
+  spec:
+    mcpServer:
+      url: http://mcp-server.dot-ai.svc:3456
+      httpTimeoutSeconds: 180  # optional, default 120
+  ```
+
+  See the [Knowledge Source Guide](https://devopstoolkit.ai/docs/controller/knowledge-source-guide) for configuration details. ([#49](https://github.com/vfarcic/dot-ai-controller/issues/49))
+
+
 ## [0.47.0] - 2026-02-06
 
 ### Bug Fixes

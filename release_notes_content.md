@@ -1,8 +1,17 @@
 
-### Bug Fixes
+### Features
 
-- ## Fix GitKnowledgeSource Continuous Sync Loop
+- ## Configurable HTTP Timeout for MCP Calls
 
-  GitKnowledgeSource no longer syncs continuously in a tight loop. Previously, every status update triggered a new reconcile, causing the controller to re-clone and re-sync the repository non-stop instead of waiting for the configured schedule.
+  GitKnowledgeSource now supports a configurable HTTP timeout for MCP API calls via `spec.mcpServer.httpTimeoutSeconds`. Previously, a hardcoded 30-second timeout caused large documents (100KB+) to fail ingestion when the MCP server needed more processing time, resulting in `SyncPartial` warnings and incomplete syncs.
 
-  The controller now uses `GenerationChangedPredicate` to only reconcile on spec changes. Scheduled syncs via cron or interval expressions continue to work as configured. ([#48](https://github.com/vfarcic/dot-ai-controller/issues/48))
+  The default timeout is now 120 seconds, which handles typical large documents without user intervention. For repositories with very large files, the timeout can be increased up to 600 seconds. A minimum of 5 seconds is enforced via CRD validation.
+
+  ```yaml
+  spec:
+    mcpServer:
+      url: http://mcp-server.dot-ai.svc:3456
+      httpTimeoutSeconds: 180  # optional, default 120
+  ```
+
+  See the [Knowledge Source Guide](https://devopstoolkit.ai/docs/controller/knowledge-source-guide) for configuration details. ([#49](https://github.com/vfarcic/dot-ai-controller/issues/49))
