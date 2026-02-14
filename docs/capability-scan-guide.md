@@ -351,7 +351,7 @@ Delete the CapabilityScanConfig to stop scanning:
 kubectl delete capabilityscanconfig default-scan
 ```
 
-This stops the CRD watcher but does not delete capability data from MCP. To remove capability data, use the MCP `manageOrgData` tool with `operation: deleteAll`. See the [Capability Management Guide](https://devopstoolkit.ai/docs/mcp/guides/mcp-capability-management-guide) for details.
+This stops the CRD watcher but does not delete capability data from MCP. To remove capability data, use the MCP `manageOrgData` tool with `operation: deleteAll`. See the [Capability Management Guide](https://devopstoolkit.ai/docs/ai-engine/tools/capability-management) for details.
 
 ## Next Steps
 
