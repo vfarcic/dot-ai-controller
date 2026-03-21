@@ -1,17 +1,8 @@
 
-### Features
+### Bug Fixes
 
-- ## Configurable HTTP Timeout for MCP Calls
+- ## GitKnowledgeSource Handles Deleted Files in Incremental Sync
 
-  GitKnowledgeSource now supports a configurable HTTP timeout for MCP API calls via `spec.mcpServer.httpTimeoutSeconds`. Previously, a hardcoded 30-second timeout caused large documents (100KB+) to fail ingestion when the MCP server needed more processing time, resulting in `SyncPartial` warnings and incomplete syncs.
+  GitKnowledgeSource incremental sync now correctly handles files deleted from the repository. Previously, deleted files caused persistent "file not found" errors and a `SyncPartial` status on every reconciliation cycle because the controller attempted to read content for files that no longer existed at HEAD.
 
-  The default timeout is now 120 seconds, which handles typical large documents without user intervention. For repositories with very large files, the timeout can be increased up to 600 seconds. A minimum of 5 seconds is enforced via CRD validation.
-
-  ```yaml
-  spec:
-    mcpServer:
-      url: http://mcp-server.dot-ai.svc:3456
-      httpTimeoutSeconds: 180  # optional, default 120
-  ```
-
-  See the [Knowledge Source Guide](https://devopstoolkit.ai/docs/controller/knowledge-source-guide) for configuration details. ([#49](https://github.com/vfarcic/dot-ai-controller/issues/49))
+  The controller now categorizes changed files as modified or deleted using git diff metadata. Modified and added files are ingested to the MCP knowledge base as before. Deleted files trigger a `deleteByUri` call to remove their chunks from the knowledge base, keeping the index accurate. Status messages now include the deleted document count (e.g., "Synced 3 documents, deleted 1").
