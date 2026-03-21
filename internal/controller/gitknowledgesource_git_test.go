@@ -9,6 +9,16 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// Test fixture branches in vfarcic/dot-ai-controller:
+// - test-base (efa276d): test/git-fixtures/{file1.md, file2.md, file3.md}
+// - test-after-add (3de174c): file1.md modified, file4.md added
+// - test-after-delete (77fb26d): file2.md deleted
+const (
+	testRepoURL        = "https://github.com/vfarcic/dot-ai-controller.git"
+	testBaseCommit     = "efa276dd4c2bbc1abd3d5bb2008163447a3f272e"
+	testAfterAddCommit = "3de174c3e148f3a7d859308f3c4b80ab2c2cd36f"
+)
+
 var _ = Describe("GitClient", func() {
 	var (
 		ctx      context.Context
@@ -81,10 +91,9 @@ var _ = Describe("GitClient", func() {
 
 	Describe("Clone", func() {
 		It("should clone a public repository", func() {
-			// Use this repo as test target (public, always available)
 			client := NewGitClient(GitClientConfig{
-				URL:      "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:   "main",
+				URL:      testRepoURL,
+				Branch:   "test-base",
 				CloneDir: cloneDir,
 				Depth:    1,
 			})
@@ -113,8 +122,8 @@ var _ = Describe("GitClient", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			client := NewGitClient(GitClientConfig{
-				URL:      "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:   "main",
+				URL:      testRepoURL,
+				Branch:   "test-base",
 				CloneDir: cloneDir,
 				Depth:    1,
 			})
@@ -152,28 +161,20 @@ var _ = Describe("GitClient", func() {
 	})
 
 	Describe("GetHeadCommit", func() {
-		var client *GitClient
-
-		BeforeEach(func() {
-			client = NewGitClient(GitClientConfig{
-				URL:      "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:   "main",
+		It("should return the expected commit SHA for a fixture branch", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:      testRepoURL,
+				Branch:   "test-base",
 				CloneDir: cloneDir,
 				Depth:    1,
 			})
 			err := client.Clone(ctx)
 			Expect(err).NotTo(HaveOccurred())
-		})
+			defer client.Cleanup()
 
-		AfterEach(func() {
-			client.Cleanup()
-		})
-
-		It("should return a valid commit SHA", func() {
 			sha, err := client.GetHeadCommit(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(sha).To(HaveLen(40)) // Git SHA is 40 hex characters
-			Expect(sha).To(MatchRegexp("^[0-9a-f]{40}$"))
+			Expect(sha).To(Equal(testBaseCommit))
 		})
 
 		It("should fail if repository not cloned", func() {
@@ -189,90 +190,163 @@ var _ = Describe("GitClient", func() {
 	})
 
 	Describe("GetAllFiles", func() {
-		var client *GitClient
-
-		BeforeEach(func() {
-			client = NewGitClient(GitClientConfig{
-				URL:      "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:   "main",
+		It("should return known fixture files on test-base", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:      testRepoURL,
+				Branch:   "test-base",
 				CloneDir: cloneDir,
 				Depth:    1,
 			})
 			err := client.Clone(ctx)
 			Expect(err).NotTo(HaveOccurred())
-		})
+			defer client.Cleanup()
 
-		AfterEach(func() {
-			client.Cleanup()
-		})
-
-		It("should return list of files", func() {
 			files, err := client.GetAllFiles(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(files).NotTo(BeEmpty())
+			Expect(files).To(ContainElement("test/git-fixtures/file1.md"))
+			Expect(files).To(ContainElement("test/git-fixtures/file2.md"))
+			Expect(files).To(ContainElement("test/git-fixtures/file3.md"))
+			Expect(files).NotTo(ContainElement("test/git-fixtures/file4.md"))
+		})
 
-			// Should contain common files
-			Expect(files).To(ContainElement("README.md"))
-			Expect(files).To(ContainElement("go.mod"))
+		It("should include file4.md on test-after-add", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:      testRepoURL,
+				Branch:   "test-after-add",
+				CloneDir: cloneDir,
+				Depth:    1,
+			})
+			err := client.Clone(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer client.Cleanup()
+
+			files, err := client.GetAllFiles(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(files).To(ContainElement("test/git-fixtures/file1.md"))
+			Expect(files).To(ContainElement("test/git-fixtures/file2.md"))
+			Expect(files).To(ContainElement("test/git-fixtures/file3.md"))
+			Expect(files).To(ContainElement("test/git-fixtures/file4.md"))
+		})
+
+		It("should not include file2.md on test-after-delete", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:      testRepoURL,
+				Branch:   "test-after-delete",
+				CloneDir: cloneDir,
+				Depth:    1,
+			})
+			err := client.Clone(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer client.Cleanup()
+
+			files, err := client.GetAllFiles(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(files).To(ContainElement("test/git-fixtures/file1.md"))
+			Expect(files).NotTo(ContainElement("test/git-fixtures/file2.md"))
+			Expect(files).To(ContainElement("test/git-fixtures/file3.md"))
+			Expect(files).To(ContainElement("test/git-fixtures/file4.md"))
 		})
 	})
 
 	Describe("GetFileContent", func() {
-		var client *GitClient
-
-		BeforeEach(func() {
-			client = NewGitClient(GitClientConfig{
-				URL:      "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:   "main",
+		It("should return original content on test-base", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:      testRepoURL,
+				Branch:   "test-base",
 				CloneDir: cloneDir,
 				Depth:    1,
 			})
 			err := client.Clone(ctx)
 			Expect(err).NotTo(HaveOccurred())
-		})
+			defer client.Cleanup()
 
-		AfterEach(func() {
-			client.Cleanup()
-		})
-
-		It("should return file content", func() {
-			content, err := client.GetFileContent(ctx, "README.md")
+			content, err := client.GetFileContent(ctx, "test/git-fixtures/file1.md")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(content).NotTo(BeEmpty())
+			Expect(string(content)).To(ContainSubstring("This is the first test fixture file."))
+			Expect(string(content)).NotTo(ContainSubstring("now modified"))
+		})
+
+		It("should return modified content on test-after-add", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:      testRepoURL,
+				Branch:   "test-after-add",
+				CloneDir: cloneDir,
+				Depth:    1,
+			})
+			err := client.Clone(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer client.Cleanup()
+
+			content, err := client.GetFileContent(ctx, "test/git-fixtures/file1.md")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(content)).To(ContainSubstring("now modified"))
+		})
+
+		It("should fail for deleted file on test-after-delete", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:      testRepoURL,
+				Branch:   "test-after-delete",
+				CloneDir: cloneDir,
+				Depth:    1,
+			})
+			err := client.Clone(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer client.Cleanup()
+
+			_, err = client.GetFileContent(ctx, "test/git-fixtures/file2.md")
+			Expect(err).To(HaveOccurred())
 		})
 
 		It("should fail for non-existent file", func() {
-			_, err := client.GetFileContent(ctx, "does-not-exist.txt")
+			client := NewGitClient(GitClientConfig{
+				URL:      testRepoURL,
+				Branch:   "test-base",
+				CloneDir: cloneDir,
+				Depth:    1,
+			})
+			err := client.Clone(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer client.Cleanup()
+
+			_, err = client.GetFileContent(ctx, "does-not-exist.txt")
 			Expect(err).To(HaveOccurred())
 		})
 	})
 
 	Describe("GetFileSize", func() {
-		var client *GitClient
-
-		BeforeEach(func() {
-			client = NewGitClient(GitClientConfig{
-				URL:      "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:   "main",
+		It("should return correct size for a known fixture file", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:      testRepoURL,
+				Branch:   "test-base",
 				CloneDir: cloneDir,
 				Depth:    1,
 			})
 			err := client.Clone(ctx)
 			Expect(err).NotTo(HaveOccurred())
-		})
+			defer client.Cleanup()
 
-		AfterEach(func() {
-			client.Cleanup()
-		})
-
-		It("should return file size", func() {
-			size, err := client.GetFileSize(ctx, "README.md")
+			size, err := client.GetFileSize(ctx, "test/git-fixtures/file1.md")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(size).To(BeNumerically(">", 0))
+
+			// Cross-check with content length
+			content, err := client.GetFileContent(ctx, "test/git-fixtures/file1.md")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(size).To(Equal(int64(len(content))))
 		})
 
 		It("should fail for non-existent file", func() {
-			_, err := client.GetFileSize(ctx, "does-not-exist.txt")
+			client := NewGitClient(GitClientConfig{
+				URL:      testRepoURL,
+				Branch:   "test-base",
+				CloneDir: cloneDir,
+				Depth:    1,
+			})
+			err := client.Clone(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer client.Cleanup()
+
+			_, err = client.GetFileSize(ctx, "does-not-exist.txt")
 			Expect(err).To(HaveOccurred())
 		})
 	})
@@ -280,11 +354,11 @@ var _ = Describe("GitClient", func() {
 	Describe("GetChangedFiles", func() {
 		It("should return nil for first sync (no lastSyncedCommit)", func() {
 			client := NewGitClient(GitClientConfig{
-				URL:              "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:           "main",
+				URL:              testRepoURL,
+				Branch:           "test-base",
 				CloneDir:         cloneDir,
-				Depth:            1,
-				LastSyncedCommit: "", // First sync
+				Depth:            10,
+				LastSyncedCommit: "",
 			})
 
 			err := client.Clone(ctx)
@@ -293,17 +367,17 @@ var _ = Describe("GitClient", func() {
 
 			changes, found, err := client.GetChangedFiles(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeFalse()) // Indicates first sync
+			Expect(found).To(BeFalse())
 			Expect(changes).To(BeNil())
 		})
 
 		It("should return nil when lastSyncedCommit not in history", func() {
 			client := NewGitClient(GitClientConfig{
-				URL:              "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:           "main",
+				URL:              testRepoURL,
+				Branch:           "test-base",
 				CloneDir:         cloneDir,
 				Depth:            1,
-				LastSyncedCommit: "0000000000000000000000000000000000000000", // Non-existent
+				LastSyncedCommit: "0000000000000000000000000000000000000000",
 			})
 
 			err := client.Clone(ctx)
@@ -312,52 +386,106 @@ var _ = Describe("GitClient", func() {
 
 			changes, found, err := client.GetChangedFiles(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeFalse()) // Fallback to full sync
+			Expect(found).To(BeFalse())
 			Expect(changes).To(BeNil())
 		})
 
 		It("should return empty changes when HEAD equals lastSyncedCommit", func() {
 			client := NewGitClient(GitClientConfig{
-				URL:      "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:   "main",
-				CloneDir: cloneDir,
-				Depth:    1,
+				URL:              testRepoURL,
+				Branch:           "test-base",
+				CloneDir:         cloneDir,
+				Depth:            10,
+				LastSyncedCommit: testBaseCommit,
 			})
 
 			err := client.Clone(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			defer client.Cleanup()
 
-			// Get current HEAD
-			headSHA, err := client.GetHeadCommit(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Create new client with current HEAD as lastSyncedCommit
-			client2 := NewGitClient(GitClientConfig{
-				URL:              "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:           "main",
-				CloneDir:         filepath.Join(tempDir, "repo2"),
-				Depth:            1,
-				LastSyncedCommit: headSHA,
-			})
-
-			err = client2.Clone(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			defer client2.Cleanup()
-
-			changes, found, err := client2.GetChangedFiles(ctx)
+			changes, found, err := client.GetChangedFiles(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
 			Expect(changes.Modified).To(BeEmpty())
 			Expect(changes.Deleted).To(BeEmpty())
+		})
+
+		It("should detect added and modified files", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:              testRepoURL,
+				Branch:           "test-after-add",
+				CloneDir:         cloneDir,
+				Depth:            10,
+				LastSyncedCommit: testBaseCommit,
+			})
+
+			err := client.Clone(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer client.Cleanup()
+
+			changes, found, err := client.GetChangedFiles(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(changes.Modified).To(ConsistOf(
+				"test/git-fixtures/file1.md",
+				"test/git-fixtures/file4.md",
+			))
+			Expect(changes.Deleted).To(BeEmpty())
+		})
+
+		It("should detect deleted files", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:              testRepoURL,
+				Branch:           "test-after-delete",
+				CloneDir:         cloneDir,
+				Depth:            10,
+				LastSyncedCommit: testAfterAddCommit,
+			})
+
+			err := client.Clone(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer client.Cleanup()
+
+			changes, found, err := client.GetChangedFiles(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(changes.Modified).To(BeEmpty())
+			Expect(changes.Deleted).To(ConsistOf(
+				"test/git-fixtures/file2.md",
+			))
+		})
+
+		It("should detect mixed additions, modifications, and deletions", func() {
+			client := NewGitClient(GitClientConfig{
+				URL:              testRepoURL,
+				Branch:           "test-after-delete",
+				CloneDir:         cloneDir,
+				Depth:            10,
+				LastSyncedCommit: testBaseCommit,
+			})
+
+			err := client.Clone(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer client.Cleanup()
+
+			changes, found, err := client.GetChangedFiles(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(changes.Modified).To(ConsistOf(
+				"test/git-fixtures/file1.md",
+				"test/git-fixtures/file4.md",
+			))
+			Expect(changes.Deleted).To(ConsistOf(
+				"test/git-fixtures/file2.md",
+			))
 		})
 	})
 
 	Describe("Cleanup", func() {
 		It("should remove clone directory", func() {
 			client := NewGitClient(GitClientConfig{
-				URL:      "https://github.com/vfarcic/dot-ai-controller.git",
-				Branch:   "main",
+				URL:      testRepoURL,
+				Branch:   "test-base",
 				CloneDir: cloneDir,
 				Depth:    1,
 			})
