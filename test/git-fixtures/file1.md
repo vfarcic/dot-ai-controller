@@ -1,3 +1,3 @@
 # File 1
 
-This is the first test fixture file.
+This is the first test fixture file, now modified.
