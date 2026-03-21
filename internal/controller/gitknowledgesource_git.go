@@ -125,10 +125,18 @@ func (g *GitClient) GetHeadCommit(ctx context.Context) (string, error) {
 	return head.Hash().String(), nil
 }
 
-// GetChangedFiles returns the list of files that changed between lastSyncedCommit and HEAD.
+// FileChanges holds the categorized file changes between two commits.
+type FileChanges struct {
+	// Modified contains files that were added or modified
+	Modified []string
+	// Deleted contains files that were deleted
+	Deleted []string
+}
+
+// GetChangedFiles returns the categorized file changes between lastSyncedCommit and HEAD.
 // If lastSyncedCommit is empty or not found in history, returns nil indicating
 // that all matching files should be processed (first sync or fallback).
-func (g *GitClient) GetChangedFiles(ctx context.Context) ([]string, bool, error) {
+func (g *GitClient) GetChangedFiles(ctx context.Context) (*FileChanges, bool, error) {
 	if g.repo == nil {
 		return nil, false, errors.New("repository not initialized, call Clone first")
 	}
@@ -160,7 +168,7 @@ func (g *GitClient) GetChangedFiles(ctx context.Context) ([]string, bool, error)
 
 	// If HEAD equals lastSyncedCommit, no changes
 	if head.Hash() == lastHash {
-		return []string{}, true, nil
+		return &FileChanges{}, true, nil
 	}
 
 	// Get the patch between commits
@@ -170,14 +178,22 @@ func (g *GitClient) GetChangedFiles(ctx context.Context) ([]string, bool, error)
 		return nil, false, nil
 	}
 
-	// Extract file names from stats
-	stats := patch.Stats()
-	files := make([]string, 0, len(stats))
-	for _, stat := range stats {
-		files = append(files, stat.Name)
+	// Categorize files by examining each file patch
+	changes := &FileChanges{}
+	for _, fp := range patch.FilePatches() {
+		from, to := fp.Files()
+		if to == nil {
+			// File was deleted (has 'from' but no 'to')
+			if from != nil {
+				changes.Deleted = append(changes.Deleted, from.Path())
+			}
+		} else {
+			// File was added (from==nil) or modified (both non-nil)
+			changes.Modified = append(changes.Modified, to.Path())
+		}
 	}
 
-	return files, true, nil
+	return changes, true, nil
 }
 
 // GetAllFiles returns all files in the repository at HEAD.

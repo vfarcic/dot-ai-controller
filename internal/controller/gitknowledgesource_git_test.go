@@ -291,10 +291,10 @@ var _ = Describe("GitClient", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer client.Cleanup()
 
-			files, found, err := client.GetChangedFiles(ctx)
+			changes, found, err := client.GetChangedFiles(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeFalse()) // Indicates first sync
-			Expect(files).To(BeNil())
+			Expect(changes).To(BeNil())
 		})
 
 		It("should return nil when lastSyncedCommit not in history", func() {
@@ -310,13 +310,13 @@ var _ = Describe("GitClient", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer client.Cleanup()
 
-			files, found, err := client.GetChangedFiles(ctx)
+			changes, found, err := client.GetChangedFiles(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeFalse()) // Fallback to full sync
-			Expect(files).To(BeNil())
+			Expect(changes).To(BeNil())
 		})
 
-		It("should return empty list when HEAD equals lastSyncedCommit", func() {
+		It("should return empty changes when HEAD equals lastSyncedCommit", func() {
 			client := NewGitClient(GitClientConfig{
 				URL:      "https://github.com/vfarcic/dot-ai-controller.git",
 				Branch:   "main",
@@ -345,10 +345,11 @@ var _ = Describe("GitClient", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer client2.Cleanup()
 
-			files, found, err := client2.GetChangedFiles(ctx)
+			changes, found, err := client2.GetChangedFiles(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue())
-			Expect(files).To(BeEmpty()) // No changes
+			Expect(changes.Modified).To(BeEmpty())
+			Expect(changes.Deleted).To(BeEmpty())
 		})
 	})
 

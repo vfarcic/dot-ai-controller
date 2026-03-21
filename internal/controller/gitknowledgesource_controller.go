@@ -331,16 +331,26 @@ func (r *GitKnowledgeSourceReconciler) doSync(ctx context.Context, gks *dotaiv1a
 	// Filter by patterns
 	matcher := NewPatternMatcher(gks.Spec.Paths, gks.Spec.Exclude)
 
+	// Track deleted files for MCP cleanup during incremental sync
+	var deletedFiles []string
+
 	// M4: Change detection - only sync files that changed since last sync
 	// M5: Force full sync if spec changed (e.g., paths filter modified)
 	if gks.Status.LastSyncedCommit != "" && !specChanged {
-		changedFiles, foundInHistory, err := gitClient.GetChangedFiles(ctx)
+		changes, foundInHistory, err := gitClient.GetChangedFiles(ctx)
 		if err != nil {
 			logger.Error(err, "Failed to get changed files, falling back to full sync")
 		} else if foundInHistory {
-			// Only process changed files that match patterns
-			filesToProcess = matcher.FilterFiles(changedFiles)
-			logger.Info("Incremental sync", "changedFiles", len(changedFiles), "matching", len(filesToProcess))
+			// Only process modified files that match patterns
+			filesToProcess = matcher.FilterFiles(changes.Modified)
+			// Track deleted files that match patterns for MCP cleanup
+			deletedFiles = matcher.FilterFiles(changes.Deleted)
+			logger.Info("Incremental sync",
+				"modifiedFiles", len(changes.Modified),
+				"deletedFiles", len(changes.Deleted),
+				"matchingModified", len(filesToProcess),
+				"matchingDeleted", len(deletedFiles),
+			)
 			goto processFiles
 		}
 		// Fall through to full sync if commit not in history
@@ -380,8 +390,27 @@ processFiles:
 	// Sync documents to MCP
 	var syncErrors int
 	var documentCount int
+	var deletedCount int
 	var lastError string
 	var skippedFiles []dotaiv1alpha1.SkippedFile
+
+	// Delete documents from MCP for files that were removed from the repository
+	for _, filePath := range deletedFiles {
+		uri := BuildDocumentURI(gks.Spec.Repository.URL, gks.Spec.Repository.Branch, filePath)
+		resp, err := mcpClient.DeleteDocument(ctx, uri)
+		if err != nil {
+			logger.Error(err, "Failed to delete document from MCP", "path", filePath, "uri", uri)
+			syncErrors++
+			lastError = fmt.Sprintf("Failed to delete %s: %v", filePath, err)
+			continue
+		}
+		logger.V(1).Info("Deleted document from MCP",
+			"path", filePath,
+			"uri", uri,
+			"chunksDeleted", resp.ChunksDeleted,
+		)
+		deletedCount++
+	}
 
 	for _, filePath := range filesToProcess {
 		// Read file content
@@ -444,16 +473,19 @@ processFiles:
 	// Set condition and phase based on results
 	if syncErrors == 0 {
 		gks.Status.Phase = dotaiv1alpha1.PhaseSynced
-		r.setSyncedCondition(gks, true, "SyncComplete",
-			fmt.Sprintf("Successfully synced %d documents", documentCount))
+		msg := fmt.Sprintf("Successfully synced %d documents", documentCount)
+		if deletedCount > 0 {
+			msg = fmt.Sprintf("Successfully synced %d documents, deleted %d", documentCount, deletedCount)
+		}
+		r.setSyncedCondition(gks, true, "SyncComplete", msg)
 		r.Recorder.Eventf(gks, corev1.EventTypeNormal, "SyncComplete",
-			"Synced %d documents from %s", documentCount, gks.Spec.Repository.URL)
+			"Synced %d documents, deleted %d from %s", documentCount, deletedCount, gks.Spec.Repository.URL)
 	} else {
 		gks.Status.Phase = dotaiv1alpha1.PhaseError
 		r.setSyncedCondition(gks, false, "SyncPartial",
-			fmt.Sprintf("Synced %d documents with %d errors", documentCount, syncErrors))
+			fmt.Sprintf("Synced %d documents, deleted %d with %d errors", documentCount, deletedCount, syncErrors))
 		r.Recorder.Eventf(gks, corev1.EventTypeWarning, "SyncPartial",
-			"Synced %d documents with %d errors", documentCount, syncErrors)
+			"Synced %d documents, deleted %d with %d errors", documentCount, deletedCount, syncErrors)
 	}
 
 	// Set Ready condition
@@ -467,6 +499,7 @@ processFiles:
 
 	logger.Info("Sync complete",
 		"documents", documentCount,
+		"deleted", deletedCount,
 		"errors", syncErrors,
 		"commit", headCommit,
 	)
