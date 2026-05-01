@@ -46,6 +46,24 @@ type EventSelector struct {
 	// +kubebuilder:validation:Enum=low;medium;high
 	// +optional
 	MaxRiskLevel string `json:"maxRiskLevel,omitempty"`
+
+	// MinOccurrences is the minimum number of matching events required within
+	// OccurrenceWindowSeconds before remediation is triggered for an object.
+	// Use this to filter out transient (single-occurrence) failures that self-recover.
+	// When 0 or 1, remediation triggers on the first matching event (no filtering).
+	// Overrides the global policy minOccurrences when specified.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MinOccurrences int `json:"minOccurrences,omitempty"`
+
+	// OccurrenceWindowSeconds is the sliding time window (in seconds) within which
+	// MinOccurrences must be reached before remediation is triggered.
+	// Only applies when MinOccurrences is greater than 1.
+	// When 0, defaults to 300 seconds (5 minutes).
+	// Overrides the global policy occurrenceWindowSeconds when specified.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	OccurrenceWindowSeconds int `json:"occurrenceWindowSeconds,omitempty"`
 }
 
 // RateLimiting defines rate limiting configuration
@@ -181,6 +199,24 @@ type RemediationPolicySpec struct {
 	// +kubebuilder:default="low"
 	// +optional
 	MaxRiskLevel string `json:"maxRiskLevel,omitempty"`
+
+	// MinOccurrences is the global default for the minimum number of matching events
+	// required within OccurrenceWindowSeconds before remediation is triggered.
+	// Use this to filter out transient (single-occurrence) failures that self-recover.
+	// When 0 or 1, remediation triggers on the first matching event (no filtering).
+	// Per-selector minOccurrences overrides this global default.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MinOccurrences int `json:"minOccurrences,omitempty"`
+
+	// OccurrenceWindowSeconds is the global default sliding time window (in seconds)
+	// within which MinOccurrences must be reached before remediation is triggered.
+	// Only applies when the effective MinOccurrences is greater than 1.
+	// When 0, defaults to 300 seconds (5 minutes).
+	// Per-selector occurrenceWindowSeconds overrides this global default.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	OccurrenceWindowSeconds int `json:"occurrenceWindowSeconds,omitempty"`
 
 	// Rate limiting configuration
 	// +optional
