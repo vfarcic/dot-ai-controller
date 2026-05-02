@@ -66,6 +66,13 @@ type RemediationPolicyReconciler struct {
 	// Key format: policy-namespace/policy-name/involved-object-namespace/involved-object-name
 	objectCooldowns   map[string]time.Time
 	objectCooldownsMu sync.RWMutex
+
+	// Occurrence tracking - records timestamps of matching events per
+	// (policy, object, reason, message) so that remediation only triggers once
+	// the configured minOccurrences threshold is reached within the sliding window.
+	// Key format: policy-ns/policy-name/obj-ns/obj-identifier/reason/message-hash
+	occurrenceTracking map[string][]time.Time
+	occurrenceMu       sync.Mutex
 }
 
 // +kubebuilder:rbac:groups=dot-ai.devopstoolkit.live,resources=remediationpolicies,verbs=get;list;watch
@@ -609,6 +616,12 @@ func (r *RemediationPolicyReconciler) reconcilePolicy(ctx context.Context, polic
 	// Periodic cleanup of expired object cooldowns
 	r.cleanupObjectCooldowns()
 
+	// Periodic cleanup of expired occurrence trackers. The cleanup TTL must be
+	// at least as long as the largest configured occurrence window across all
+	// active policies — otherwise we could prune valid in-window entries and
+	// silently break the threshold guarantee for that policy.
+	r.cleanupOccurrenceTracking(r.maxOccurrenceWindow(ctx))
+
 	// Requeue periodically to perform maintenance
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
@@ -674,6 +687,27 @@ func (r *RemediationPolicyReconciler) reconcileEvent(ctx context.Context, event 
 		if matches, matchingSelector := r.matchesPolicyWithSelector(event, &policy); matches {
 			effectiveMode := r.getEffectiveMode(matchingSelector, &policy)
 
+			// Check occurrence threshold first - filters transient single-occurrence
+			// failures (e.g., probe blips during VPA in-place resize) so that
+			// remediation only triggers when the same event recurs N times within
+			// a sliding window. Skips processing entirely (no cooldown set, no
+			// rate-limit slot consumed, no MCP call) when threshold not yet met.
+			if filter, count, threshold, key := r.shouldFilterByOccurrence(ctx, &policy, matchingSelector, event); filter {
+				logger.Info("Event below occurrence threshold, skipping remediation",
+					"policy", fmt.Sprintf("%s/%s", policy.Namespace, policy.Name),
+					"count", count,
+					"required", threshold,
+					"key", key,
+					"involvedObject", fmt.Sprintf("%s/%s", event.InvolvedObject.Kind, event.InvolvedObject.Name),
+				)
+				// Mark the event itself as processed so it isn't re-evaluated next reconcile,
+				// but do not start any cooldown — we want the next matching event to
+				// continue building up the counter.
+				r.markEventProcessed(eventKey)
+				matched = true
+				break
+			}
+
 			// Check object-level cooldown first (independent of rate limiting)
 			// This prevents notification storms from multiple events for the same object
 			if inCooldown, reason := r.isObjectInCooldown(ctx, &policy, event); inCooldown {
@@ -730,7 +764,17 @@ func (r *RemediationPolicyReconciler) reconcileEvent(ctx context.Context, event 
 			if err := r.processEvent(ctx, event, &policy, matchingSelector); err != nil {
 				logger.Error(err, "failed to process event",
 					"policy", fmt.Sprintf("%s/%s", policy.Namespace, policy.Name))
+				// Do NOT reset the occurrence counter on failure — accumulated
+				// occurrences must be preserved so transient MCP/auth failures
+				// don't silently swallow the threshold guarantee.
 				return ctrl.Result{}, err
+			}
+
+			// Reset the occurrence counter only after a successful remediation:
+			// the next remediation requires the counter to rebuild from zero
+			// within the window.
+			if threshold := r.getEffectiveMinOccurrences(matchingSelector, &policy); threshold > 1 {
+				r.resetOccurrenceCount(r.getOccurrenceKey(ctx, &policy, event))
 			}
 
 			// Process for the first matching policy only to avoid duplicate processing
