@@ -255,12 +255,25 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 				Message:        "Readiness probe failed: HTTP 503",
 			}
 
+			// Same name, different kind — counter must not collide.
+			eventD := &corev1.Event{
+				InvolvedObject: corev1.ObjectReference{
+					Kind:      "Deployment",
+					Name:      eventBase.Name,
+					Namespace: eventBase.Namespace,
+				},
+				Reason:  "Unhealthy",
+				Message: "Readiness probe failed: HTTP 503",
+			}
+
 			keyA := reconciler.getOccurrenceKey(ctx, policy, eventA)
 			keyB := reconciler.getOccurrenceKey(ctx, policy, eventB)
 			keyC := reconciler.getOccurrenceKey(ctx, policy, eventC)
+			keyD := reconciler.getOccurrenceKey(ctx, policy, eventD)
 
 			Expect(keyA).NotTo(Equal(keyB), "different messages should produce different keys")
 			Expect(keyA).NotTo(Equal(keyC), "different reasons should produce different keys")
+			Expect(keyA).NotTo(Equal(keyD), "different kinds with the same name should produce different keys")
 
 			keyA2 := reconciler.getOccurrenceKey(ctx, policy, eventA)
 			Expect(keyA).To(Equal(keyA2))

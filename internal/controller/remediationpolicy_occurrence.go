@@ -55,12 +55,16 @@ func (r *RemediationPolicyReconciler) getEffectiveOccurrenceWindow(selector dota
 func (r *RemediationPolicyReconciler) getOccurrenceKey(ctx context.Context, policy *dotaiv1alpha1.RemediationPolicy, event *corev1.Event) string {
 	ownerKind, ownerName := r.resolveOwnerForRateLimiting(ctx, event.InvolvedObject)
 
-	var objectIdentifier string
-	if ownerKind != "" {
-		objectIdentifier = fmt.Sprintf("%s:%s", ownerKind, ownerName)
-	} else {
-		objectIdentifier = ownerName
+	// Always include a kind in the identifier so resources of different kinds
+	// sharing a name (e.g. Pod/foo vs Deployment/foo) can't collide on a
+	// single counter. When resolveOwnerForRateLimiting normalized to a Job
+	// or CronJob owner, use that kind; otherwise fall back to the event's
+	// involved-object kind.
+	objectKind := ownerKind
+	if objectKind == "" {
+		objectKind = event.InvolvedObject.Kind
 	}
+	objectIdentifier := fmt.Sprintf("%s:%s", objectKind, ownerName)
 
 	messageHash := hashMessage(event.Message)
 
