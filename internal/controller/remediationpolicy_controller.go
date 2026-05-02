@@ -616,9 +616,11 @@ func (r *RemediationPolicyReconciler) reconcilePolicy(ctx context.Context, polic
 	// Periodic cleanup of expired object cooldowns
 	r.cleanupObjectCooldowns()
 
-	// Periodic cleanup of expired occurrence trackers (use 1h as a safe upper
-	// bound — typical OccurrenceWindowSeconds defaults to 5m)
-	r.cleanupOccurrenceTracking(1 * time.Hour)
+	// Periodic cleanup of expired occurrence trackers. The cleanup TTL must be
+	// at least as long as the largest configured occurrence window across all
+	// active policies — otherwise we could prune valid in-window entries and
+	// silently break the threshold guarantee for that policy.
+	r.cleanupOccurrenceTracking(r.maxOccurrenceWindow(ctx))
 
 	// Requeue periodically to perform maintenance
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
@@ -755,13 +757,6 @@ func (r *RemediationPolicyReconciler) reconcileEvent(ctx context.Context, event 
 			r.markEventProcessed(eventKey)
 			matched = true
 
-			// Reset occurrence counter for this key after threshold is reached and
-			// remediation is triggered. The next remediation requires the counter
-			// to rebuild from zero within the window.
-			if threshold := r.getEffectiveMinOccurrences(matchingSelector, &policy); threshold > 1 {
-				r.resetOccurrenceCount(r.getOccurrenceKey(ctx, &policy, event))
-			}
-
 			// Set object cooldown before processing to block subsequent events immediately
 			r.setObjectCooldown(ctx, &policy, event)
 
@@ -769,7 +764,17 @@ func (r *RemediationPolicyReconciler) reconcileEvent(ctx context.Context, event 
 			if err := r.processEvent(ctx, event, &policy, matchingSelector); err != nil {
 				logger.Error(err, "failed to process event",
 					"policy", fmt.Sprintf("%s/%s", policy.Namespace, policy.Name))
+				// Do NOT reset the occurrence counter on failure — accumulated
+				// occurrences must be preserved so transient MCP/auth failures
+				// don't silently swallow the threshold guarantee.
 				return ctrl.Result{}, err
+			}
+
+			// Reset the occurrence counter only after a successful remediation:
+			// the next remediation requires the counter to rebuild from zero
+			// within the window.
+			if threshold := r.getEffectiveMinOccurrences(matchingSelector, &policy); threshold > 1 {
+				r.resetOccurrenceCount(r.getOccurrenceKey(ctx, &policy, event))
 			}
 
 			// Process for the first matching policy only to avoid duplicate processing

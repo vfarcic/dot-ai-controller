@@ -21,27 +21,31 @@ import (
 // MinOccurrences is configured but no window is specified.
 const DefaultOccurrenceWindowSeconds = 300
 
-// getEffectiveMinOccurrences returns the effective minimum-occurrence threshold for
-// a selector, preferring the selector value when set, otherwise the policy default.
-// Returns 0 (meaning "no filtering") when neither is set.
+// getEffectiveMinOccurrences returns the effective minimum-occurrence threshold
+// for a selector. Pointer types let an explicitly-set selector value override
+// a non-zero policy default (including with 0 or 1 to disable filtering for
+// that selector). Returns 0 (no filtering) when neither is set.
 func (r *RemediationPolicyReconciler) getEffectiveMinOccurrences(selector dotaiv1alpha1.EventSelector, policy *dotaiv1alpha1.RemediationPolicy) int {
-	if selector.MinOccurrences > 0 {
-		return selector.MinOccurrences
+	if selector.MinOccurrences != nil {
+		return *selector.MinOccurrences
 	}
-	return policy.Spec.MinOccurrences
+	if policy.Spec.MinOccurrences != nil {
+		return *policy.Spec.MinOccurrences
+	}
+	return 0
 }
 
 // getEffectiveOccurrenceWindow returns the effective sliding-window duration.
-// Selector value wins, then policy default, then DefaultOccurrenceWindowSeconds.
+// Selector value wins (when set), then policy default (when set), then
+// DefaultOccurrenceWindowSeconds.
 func (r *RemediationPolicyReconciler) getEffectiveOccurrenceWindow(selector dotaiv1alpha1.EventSelector, policy *dotaiv1alpha1.RemediationPolicy) time.Duration {
-	seconds := selector.OccurrenceWindowSeconds
-	if seconds <= 0 {
-		seconds = policy.Spec.OccurrenceWindowSeconds
+	if selector.OccurrenceWindowSeconds != nil && *selector.OccurrenceWindowSeconds > 0 {
+		return time.Duration(*selector.OccurrenceWindowSeconds) * time.Second
 	}
-	if seconds <= 0 {
-		seconds = DefaultOccurrenceWindowSeconds
+	if policy.Spec.OccurrenceWindowSeconds != nil && *policy.Spec.OccurrenceWindowSeconds > 0 {
+		return time.Duration(*policy.Spec.OccurrenceWindowSeconds) * time.Second
 	}
-	return time.Duration(seconds) * time.Second
+	return time.Duration(DefaultOccurrenceWindowSeconds) * time.Second
 }
 
 // getOccurrenceKey creates a unique key for occurrence tracking. Includes the
@@ -117,6 +121,40 @@ func (r *RemediationPolicyReconciler) resetOccurrenceCount(key string) {
 		return
 	}
 	delete(r.occurrenceTracking, key)
+}
+
+// maxOccurrenceWindow returns the largest effective occurrence window configured
+// across all active RemediationPolicies, with a small safety slack. Used as the
+// cleanup TTL so we never prune in-window entries for any policy. Falls back to
+// the default window when no policies are listable or none configure a window.
+func (r *RemediationPolicyReconciler) maxOccurrenceWindow(ctx context.Context) time.Duration {
+	logger := logf.FromContext(ctx)
+
+	defaultWindow := time.Duration(DefaultOccurrenceWindowSeconds) * time.Second
+	maxSeconds := DefaultOccurrenceWindowSeconds
+
+	var policies dotaiv1alpha1.RemediationPolicyList
+	if err := r.List(ctx, &policies); err != nil {
+		logger.V(1).Info("Failed to list policies for cleanup TTL, using default window",
+			"error", err)
+		return defaultWindow
+	}
+
+	for i := range policies.Items {
+		policy := &policies.Items[i]
+		if policy.Spec.OccurrenceWindowSeconds != nil && *policy.Spec.OccurrenceWindowSeconds > maxSeconds {
+			maxSeconds = *policy.Spec.OccurrenceWindowSeconds
+		}
+		for _, sel := range policy.Spec.EventSelectors {
+			if sel.OccurrenceWindowSeconds != nil && *sel.OccurrenceWindowSeconds > maxSeconds {
+				maxSeconds = *sel.OccurrenceWindowSeconds
+			}
+		}
+	}
+
+	// Add 10% slack so cleanup runs slightly after the last valid timestamp would
+	// have aged out, avoiding races with concurrent writes.
+	return time.Duration(maxSeconds) * time.Second * 11 / 10
 }
 
 // cleanupOccurrenceTracking removes expired entries to prevent unbounded growth.

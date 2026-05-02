@@ -111,7 +111,8 @@ spec:
                         OccurrenceWindowSeconds before remediation is triggered for an object.
                         Use this to filter out transient (single-occurrence) failures that self-recover.
                         When 0 or 1, remediation triggers on the first matching event (no filtering).
-                        Overrides the global policy minOccurrences when specified.
+                        Overrides the global policy minOccurrences when set (including explicit 0/1
+                        to disable filtering for this selector even when a global default is set).
                       minimum: 0
                       type: integer
                     mode:
@@ -129,10 +130,11 @@ spec:
                       description: |-
                         OccurrenceWindowSeconds is the sliding time window (in seconds) within which
                         MinOccurrences must be reached before remediation is triggered.
-                        Only applies when MinOccurrences is greater than 1.
-                        When 0, defaults to 300 seconds (5 minutes).
-                        Overrides the global policy occurrenceWindowSeconds when specified.
-                      minimum: 0
+                        Only applies when the effective MinOccurrences is greater than 1.
+                        When unset, falls back to the policy default; when neither is set, defaults
+                        to 300 seconds (5 minutes).
+                        Overrides the global policy occurrenceWindowSeconds when set.
+                      minimum: 1
                       type: integer
                     reason:
                       description: Reason for the event
@@ -178,7 +180,7 @@ spec:
                   MinOccurrences is the global default for the minimum number of matching events
                   required within OccurrenceWindowSeconds before remediation is triggered.
                   Use this to filter out transient (single-occurrence) failures that self-recover.
-                  When 0 or 1, remediation triggers on the first matching event (no filtering).
+                  When unset, 0, or 1, remediation triggers on the first matching event (no filtering).
                   Per-selector minOccurrences overrides this global default.
                 minimum: 0
                 type: integer
@@ -278,9 +280,9 @@ spec:
                   OccurrenceWindowSeconds is the global default sliding time window (in seconds)
                   within which MinOccurrences must be reached before remediation is triggered.
                   Only applies when the effective MinOccurrences is greater than 1.
-                  When 0, defaults to 300 seconds (5 minutes).
+                  When unset, defaults to 300 seconds (5 minutes).
                   Per-selector occurrenceWindowSeconds overrides this global default.
-                minimum: 0
+                minimum: 1
                 type: integer
               persistence:
                 description: |-

@@ -15,6 +15,8 @@ import (
 	dotaiv1alpha1 "github.com/vfarcic/dot-ai-controller/api/v1alpha1"
 )
 
+func intPtr(i int) *int { return &i }
+
 var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 	var (
 		reconciler *RemediationPolicyReconciler
@@ -43,17 +45,17 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 
 	Describe("getEffectiveMinOccurrences", func() {
 		It("returns selector value when set", func() {
-			selector := dotaiv1alpha1.EventSelector{MinOccurrences: 3}
+			selector := dotaiv1alpha1.EventSelector{MinOccurrences: intPtr(3)}
 			policy := &dotaiv1alpha1.RemediationPolicy{
-				Spec: dotaiv1alpha1.RemediationPolicySpec{MinOccurrences: 5},
+				Spec: dotaiv1alpha1.RemediationPolicySpec{MinOccurrences: intPtr(5)},
 			}
 			Expect(reconciler.getEffectiveMinOccurrences(selector, policy)).To(Equal(3))
 		})
 
-		It("falls back to policy value when selector is zero", func() {
+		It("falls back to policy value when selector is unset", func() {
 			selector := dotaiv1alpha1.EventSelector{}
 			policy := &dotaiv1alpha1.RemediationPolicy{
-				Spec: dotaiv1alpha1.RemediationPolicySpec{MinOccurrences: 5},
+				Spec: dotaiv1alpha1.RemediationPolicySpec{MinOccurrences: intPtr(5)},
 			}
 			Expect(reconciler.getEffectiveMinOccurrences(selector, policy)).To(Equal(5))
 		})
@@ -63,21 +65,30 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 			policy := &dotaiv1alpha1.RemediationPolicy{}
 			Expect(reconciler.getEffectiveMinOccurrences(selector, policy)).To(Equal(0))
 		})
+
+		It("respects an explicit selector zero overriding a non-zero policy default", func() {
+			selector := dotaiv1alpha1.EventSelector{MinOccurrences: intPtr(0)}
+			policy := &dotaiv1alpha1.RemediationPolicy{
+				Spec: dotaiv1alpha1.RemediationPolicySpec{MinOccurrences: intPtr(5)},
+			}
+			Expect(reconciler.getEffectiveMinOccurrences(selector, policy)).To(Equal(0),
+				"explicit selector 0 should disable filtering even when policy default is set")
+		})
 	})
 
 	Describe("getEffectiveOccurrenceWindow", func() {
 		It("uses selector window when set", func() {
-			selector := dotaiv1alpha1.EventSelector{OccurrenceWindowSeconds: 60}
+			selector := dotaiv1alpha1.EventSelector{OccurrenceWindowSeconds: intPtr(60)}
 			policy := &dotaiv1alpha1.RemediationPolicy{
-				Spec: dotaiv1alpha1.RemediationPolicySpec{OccurrenceWindowSeconds: 600},
+				Spec: dotaiv1alpha1.RemediationPolicySpec{OccurrenceWindowSeconds: intPtr(600)},
 			}
 			Expect(reconciler.getEffectiveOccurrenceWindow(selector, policy)).To(Equal(60 * time.Second))
 		})
 
-		It("falls back to policy window when selector is zero", func() {
+		It("falls back to policy window when selector is unset", func() {
 			selector := dotaiv1alpha1.EventSelector{}
 			policy := &dotaiv1alpha1.RemediationPolicy{
-				Spec: dotaiv1alpha1.RemediationPolicySpec{OccurrenceWindowSeconds: 600},
+				Spec: dotaiv1alpha1.RemediationPolicySpec{OccurrenceWindowSeconds: intPtr(600)},
 			}
 			Expect(reconciler.getEffectiveOccurrenceWindow(selector, policy)).To(Equal(600 * time.Second))
 		})
@@ -110,7 +121,6 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 		It("prunes occurrences outside the window", func() {
 			key := "test-key-2"
 
-			// Manually inject a stale timestamp
 			reconciler.occurrenceMu.Lock()
 			if reconciler.occurrenceTracking == nil {
 				reconciler.occurrenceTracking = make(map[string][]time.Time)
@@ -118,7 +128,6 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 			reconciler.occurrenceTracking[key] = []time.Time{time.Now().Add(-1 * time.Hour)}
 			reconciler.occurrenceMu.Unlock()
 
-			// New occurrence with a 5-minute window should drop the stale entry
 			allowed, count := reconciler.recordOccurrenceAndCheckThreshold(key, 2, 5*time.Minute)
 			Expect(allowed).To(BeFalse())
 			Expect(count).To(Equal(1))
@@ -187,6 +196,38 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 		})
 	})
 
+	Describe("maxOccurrenceWindow", func() {
+		It("returns default window when no policies are configured", func() {
+			result := reconciler.maxOccurrenceWindow(ctx)
+			expected := time.Duration(DefaultOccurrenceWindowSeconds) * time.Second * 11 / 10
+			Expect(result).To(Equal(expected))
+		})
+
+		It("picks the largest configured window across selector and policy levels", func() {
+			policy := &dotaiv1alpha1.RemediationPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "max-win-policy", Namespace: testNs},
+				Spec: dotaiv1alpha1.RemediationPolicySpec{
+					EventSelectors: []dotaiv1alpha1.EventSelector{
+						{Type: "Warning", Reason: "X", OccurrenceWindowSeconds: intPtr(7200)},
+						{Type: "Warning", Reason: "Y", OccurrenceWindowSeconds: intPtr(3600)},
+					},
+					McpEndpoint: "http://test/mcp",
+					McpAuthSecretRef: dotaiv1alpha1.SecretReference{
+						Name: "mcp-auth-secret",
+						Key:  "api-key",
+					},
+					OccurrenceWindowSeconds: intPtr(1800),
+				},
+			}
+			Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, policy) }()
+
+			result := reconciler.maxOccurrenceWindow(ctx)
+			expected := time.Duration(7200) * time.Second * 11 / 10
+			Expect(result).To(Equal(expected))
+		})
+	})
+
 	Describe("getOccurrenceKey", func() {
 		It("includes reason and message hash so different failures track separately", func() {
 			policy := &dotaiv1alpha1.RemediationPolicy{
@@ -221,7 +262,6 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 			Expect(keyA).NotTo(Equal(keyB), "different messages should produce different keys")
 			Expect(keyA).NotTo(Equal(keyC), "different reasons should produce different keys")
 
-			// Same event produces the same key
 			keyA2 := reconciler.getOccurrenceKey(ctx, policy, eventA)
 			Expect(keyA).To(Equal(keyA2))
 		})
@@ -255,13 +295,16 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 		})
 
 		It("does not filter when threshold is exactly 1 (no filtering desired)", func() {
-			selector := dotaiv1alpha1.EventSelector{MinOccurrences: 1}
+			selector := dotaiv1alpha1.EventSelector{MinOccurrences: intPtr(1)}
 			filter, _, _, _ := reconciler.shouldFilterByOccurrence(ctx, policy, selector, event)
 			Expect(filter).To(BeFalse())
 		})
 
 		It("filters first occurrence when threshold is 2", func() {
-			selector := dotaiv1alpha1.EventSelector{MinOccurrences: 2, OccurrenceWindowSeconds: 60}
+			selector := dotaiv1alpha1.EventSelector{
+				MinOccurrences:          intPtr(2),
+				OccurrenceWindowSeconds: intPtr(60),
+			}
 
 			filter, count, threshold, _ := reconciler.shouldFilterByOccurrence(ctx, policy, selector, event)
 			Expect(filter).To(BeTrue())
@@ -270,21 +313,25 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 		})
 
 		It("allows second occurrence within window", func() {
-			selector := dotaiv1alpha1.EventSelector{MinOccurrences: 2, OccurrenceWindowSeconds: 60}
+			selector := dotaiv1alpha1.EventSelector{
+				MinOccurrences:          intPtr(2),
+				OccurrenceWindowSeconds: intPtr(60),
+			}
 
-			// First call -> filtered
 			filter1, _, _, _ := reconciler.shouldFilterByOccurrence(ctx, policy, selector, event)
 			Expect(filter1).To(BeTrue())
 
-			// Second call -> allowed (threshold met)
 			filter2, count2, _, _ := reconciler.shouldFilterByOccurrence(ctx, policy, selector, event)
 			Expect(filter2).To(BeFalse())
 			Expect(count2).To(Equal(2))
 		})
 
 		It("respects per-selector override over policy default", func() {
-			policy.Spec.MinOccurrences = 5
-			selector := dotaiv1alpha1.EventSelector{MinOccurrences: 2, OccurrenceWindowSeconds: 60}
+			policy.Spec.MinOccurrences = intPtr(5)
+			selector := dotaiv1alpha1.EventSelector{
+				MinOccurrences:          intPtr(2),
+				OccurrenceWindowSeconds: intPtr(60),
+			}
 
 			reconciler.shouldFilterByOccurrence(ctx, policy, selector, event)
 			filter, _, threshold, _ := reconciler.shouldFilterByOccurrence(ctx, policy, selector, event)
@@ -293,12 +340,11 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 			Expect(filter).To(BeFalse(), "should allow on second call with selector threshold of 2")
 		})
 
-		It("uses policy default when selector value is zero", func() {
-			policy.Spec.MinOccurrences = 3
-			policy.Spec.OccurrenceWindowSeconds = 60
+		It("uses policy default when selector value is unset", func() {
+			policy.Spec.MinOccurrences = intPtr(3)
+			policy.Spec.OccurrenceWindowSeconds = intPtr(60)
 			selector := dotaiv1alpha1.EventSelector{}
 
-			// Need 3 occurrences before allowed
 			f1, _, _, _ := reconciler.shouldFilterByOccurrence(ctx, policy, selector, event)
 			f2, _, _, _ := reconciler.shouldFilterByOccurrence(ctx, policy, selector, event)
 			f3, c3, threshold, _ := reconciler.shouldFilterByOccurrence(ctx, policy, selector, event)
@@ -308,6 +354,15 @@ var _ = Describe("RemediationPolicy Occurrence Threshold", func() {
 			Expect(f3).To(BeFalse())
 			Expect(c3).To(Equal(3))
 			Expect(threshold).To(Equal(3))
+		})
+
+		It("allows explicit selector zero to override a non-zero policy default", func() {
+			policy.Spec.MinOccurrences = intPtr(5)
+			selector := dotaiv1alpha1.EventSelector{MinOccurrences: intPtr(0)}
+
+			filter, _, threshold, _ := reconciler.shouldFilterByOccurrence(ctx, policy, selector, event)
+			Expect(filter).To(BeFalse(), "explicit zero should disable filtering even with policy default of 5")
+			Expect(threshold).To(Equal(0))
 		})
 	})
 })
