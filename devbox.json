@@ -20,6 +20,9 @@
       "[ -n \"$USE_VALS\" ] && eval \"$(vals env -export -f .env.vals.yaml)\" || true",
       "[ -f .env ] && source .env || true"
     ],
-    "scripts": {}
+    "scripts": {
+      "agent": ["claude --continue"],
+      "agent-new": ["claude"]
+    }
   }
 }
