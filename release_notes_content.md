@@ -1,8 +1,23 @@
 
-### Bug Fixes
+### Features
 
-- ## GitKnowledgeSource Handles Deleted Files in Incremental Sync
+- ## RemediationPolicy Occurrence Threshold
 
-  GitKnowledgeSource incremental sync now correctly handles files deleted from the repository. Previously, deleted files caused persistent "file not found" errors and a `SyncPartial` status on every reconciliation cycle because the controller attempted to read content for files that no longer existed at HEAD.
+  RemediationPolicy now supports an occurrence-threshold filter that suppresses transient single-occurrence failures so remediation only triggers when an event recurs. This addresses a long-standing gap where the *first* matching event always triggered an MCP call, paying the full analysis cost (and emitting Slack/Google Chat notifications) for self-healing blips like probe failures during VPA in-place resizes.
 
-  The controller now categorizes changed files as modified or deleted using git diff metadata. Modified and added files are ingested to the MCP knowledge base as before. Deleted files trigger a `deleteByUri` call to remove their chunks from the knowledge base, keeping the index accurate. Status messages now include the deleted document count (e.g., "Synced 3 documents, deleted 1").
+  Two new optional fields are available on each `eventSelector` entry, with matching global defaults at the policy level: `minOccurrences` (count required before remediating) and `occurrenceWindowSeconds` (sliding window in which the count must accumulate, default 300). Selector values override the policy defaults — including an explicit `minOccurrences: 0` to disable filtering for that selector even when a global default is set — mirroring how `confidenceThreshold` and `maxRiskLevel` already work. Counters are tracked per `(policy, involvedObject, reason, message)` so a transient `503` blip on a probe doesn't mask a genuine `500` failure of the same probe — distinct messages are counted independently. Pods owned by Jobs/CronJobs share counters via the existing owner-resolution scheme.
+
+  Sub-threshold events are silently counted and exit early — no object cooldown is started, no rate-limit slot is consumed, no MCP call, no notification. After remediation triggers, the counter for that key resets, requiring the threshold to be rebuilt within a fresh window before another remediation fires.
+
+  Example — tolerate transient probe blips during VPA resizes while preserving visibility into real probe failures:
+
+  ```yaml
+  eventSelectors:
+    - type: Warning
+      reason: Unhealthy
+      involvedObjectKind: Pod
+      minOccurrences: 2
+      occurrenceWindowSeconds: 300
+  ```
+
+  Existing policies are unaffected: both fields default to zero, which means "remediate on first match" — identical to today's behavior.
