@@ -128,6 +128,11 @@ This installs all five CRDs (Solution, RemediationPolicy, ResourceSyncConfig, Ca
 First, install the [DevOps AI Toolkit MCP](https://devopstoolkit.ai/docs/mcp), then:
 
 ```bash
+# Create a secret with your MCP auth token (if not already created)
+kubectl create secret generic dot-ai-secrets \
+  --namespace dot-ai \
+  --from-literal=auth-token=your-auth-token-here
+
 # Create a RemediationPolicy to handle events
 kubectl apply --filename - <<'EOF'
 apiVersion: dot-ai.devopstoolkit.live/v1alpha1
@@ -141,6 +146,9 @@ spec:
       reason: FailedScheduling
       mode: automatic
   mcpEndpoint: http://dot-ai-mcp.dot-ai.svc.cluster.local:3456/api/v1/tools/remediate
+  mcpAuthSecretRef:
+    name: dot-ai-secrets
+    key: auth-token
   mode: manual
 EOF
 ```
