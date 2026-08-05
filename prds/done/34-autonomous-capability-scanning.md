@@ -4,8 +4,20 @@
 **Status**: Complete
 **Priority**: High
 **Created**: 2025-12-24
-**Last Updated**: 2025-12-25
+**Last Updated**: 2026-08-05
 **Completed**: 2025-12-25
+
+> [!WARNING]
+> **The [MCP Server API Reference](#mcp-server-api-reference) section below is wrong and must not be used as a spec.**
+> It documents the `manageOrgData` response one nesting level too shallow and hides the
+> `id` vs `resourceName` distinction. The controller, its unit fixtures, and the e2e mock
+> MCP server were all built from it, which is the root cause of
+> [vfarcic/dot-ai#709](https://github.com/vfarcic/dot-ai/discussions/709) — capability scans
+> silently never populating on a fresh install.
+>
+> The corrected contract and the fixes are in
+> [PRD #55](../55-capability-scan-reconciliation.md). The rest of this document
+> (design, milestones, progress log) stands as the historical record.
 
 ## Related Context
 
@@ -130,6 +142,54 @@ Deploy a Kubernetes controller that autonomously manages capability scanning by:
 4. MCP server removes capability data from database
 
 ## MCP Server API Reference
+
+> [!CAUTION]
+> **Every response example in this section is wrong.** They were written by hand from prose
+> rather than captured from a real server, and were never validated against one. Superseded by
+> [PRD #55](../55-capability-scan-reconciliation.md); do not copy anything below.
+>
+> Two errors run through all of them:
+>
+> 1. **The payload is one level deeper.** REST wraps tool output as
+>    `{success, data:{result:<toolOutput>, ...}}`, and the tool output is itself
+>    `{success, operation, dataType, data:{...}}`. So the real path is
+>    `data.result.data.capabilities`, not `data.result.capabilities`.
+> 2. **`id` is not the resource identity.** It is a deterministic UUID
+>    (`sha256("capability-" + resourceName)`). The field carrying `Kind.group` is
+>    `resourceName`. Diffs must match on `resourceName`. Eliding the array contents as
+>    `"capabilities": [...]` below is what hid this.
+>
+> A third trap is not an error in these examples but is not stated anywhere either: the
+> outer `success` is the REST envelope flag and is `true` whenever the handler did not throw.
+> Operation failures — an unreachable Qdrant, for instance — appear as `data.result.success:
+> false` under **HTTP 200 with envelope `success: true`**. Always check the inner flag.
+>
+> Corrected shape for the list response:
+>
+> ```json
+> {
+>   "success": true,
+>   "data": {
+>     "result": {
+>       "success": true,
+>       "operation": "list",
+>       "dataType": "capabilities",
+>       "data": {
+>         "capabilities": [
+>           { "id": "a1b2c3d4-...", "resourceName": "SQL.devopstoolkit.live", "...": "..." }
+>         ],
+>         "totalCount": 150,
+>         "returnedCount": 100,
+>         "limit": 100
+>       }
+>     }
+>   }
+> }
+> ```
+>
+> Note `returnedCount` vs `totalCount`: `list` caps the array (100 until
+> [vfarcic/dot-ai#714](https://github.com/vfarcic/dot-ai/issues/714) raises it) while
+> `totalCount` is uncapped. A diff computed from a truncated list is unsafe — see PRD #55.
 
 The MCP server exposes the following endpoints that the controller will use. These APIs were implemented in Phase 1 (PRD #216 in dot-ai repo).
 
