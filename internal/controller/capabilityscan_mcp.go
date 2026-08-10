@@ -34,28 +34,57 @@ type ManageOrgDataRequest struct {
 	Limit        int    `json:"limit,omitempty"`        // For list operation
 }
 
-// CapabilityInfo represents a capability returned from MCP
+// CapabilityInfo represents a capability returned from MCP.
+// ID is a UUID used for deletion; ResourceName is the "Kind.group" identifier
+// used to match capabilities against cluster resources during diffing.
 type CapabilityInfo struct {
-	ID string `json:"id"`
+	ID           string `json:"id"`
+	ResourceName string `json:"resourceName"`
+}
+
+// ManageOrgDataListData holds the list payload. The MCP server nests it under
+// result.data (i.e. data.result.data.{capabilities,totalCount,returnedCount}).
+type ManageOrgDataListData struct {
+	Capabilities  []CapabilityInfo `json:"capabilities,omitempty"`
+	TotalCount    int              `json:"totalCount,omitempty"`
+	ReturnedCount int              `json:"returnedCount,omitempty"`
+}
+
+// ManageOrgDataResult is the operation result nested under data.result.
+// Success here is the operation outcome, distinct from the transport-level
+// Success on ManageOrgDataResponse.
+type ManageOrgDataResult struct {
+	Success   bool                   `json:"success"`
+	Status    string                 `json:"status,omitempty"`
+	Message   string                 `json:"message,omitempty"`
+	Operation string                 `json:"operation,omitempty"`
+	Data      *ManageOrgDataListData `json:"data,omitempty"`
+}
+
+// ManageOrgDataEnvelope is the data envelope nested under the top-level data.
+type ManageOrgDataEnvelope struct {
+	Result *ManageOrgDataResult `json:"result,omitempty"`
+}
+
+// ManageOrgDataError is the top-level error object.
+type ManageOrgDataError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // ManageOrgDataResponse is the response from POST /api/v1/tools/manageOrgData
 type ManageOrgDataResponse struct {
-	Success bool `json:"success"`
-	Data    *struct {
-		Result *struct {
-			Success      bool             `json:"success"`
-			Status       string           `json:"status,omitempty"`
-			Message      string           `json:"message,omitempty"`
-			Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-			TotalCount   int              `json:"totalCount,omitempty"`
-			Operation    string           `json:"operation,omitempty"`
-		} `json:"result,omitempty"`
-	} `json:"data,omitempty"`
-	Error *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
+	Success bool                   `json:"success"`
+	Data    *ManageOrgDataEnvelope `json:"data,omitempty"`
+	Error   *ManageOrgDataError    `json:"error,omitempty"`
+}
+
+// result returns the nested operation result, or nil if absent.
+func (r *ManageOrgDataResponse) result() *ManageOrgDataResult {
+	if r.Data == nil {
+		return nil
+	}
+	return r.Data.Result
 }
 
 // GetErrorMessage extracts error message from the response
@@ -68,32 +97,48 @@ func (r *ManageOrgDataResponse) GetErrorMessage() string {
 			return fmt.Sprintf("error code: %s", r.Error.Code)
 		}
 	}
-	if r.Data != nil && r.Data.Result != nil && r.Data.Result.Message != "" {
-		return r.Data.Result.Message
+	if res := r.result(); res != nil && res.Message != "" {
+		return res.Message
 	}
 	return "unknown error"
 }
 
+// HasResultError reports whether the envelope succeeded but the nested
+// operation result reports a failure. manageOrgData catches every error and
+// returns HTTP 200 with the transport Success flag set, so the operation
+// outcome only lives in data.result.success.
+func (r *ManageOrgDataResponse) HasResultError() bool {
+	res := r.result()
+	return res != nil && !res.Success
+}
+
 // GetTotalCount returns the total count of capabilities from a list response
 func (r *ManageOrgDataResponse) GetTotalCount() int {
-	if r.Data != nil && r.Data.Result != nil {
-		return r.Data.Result.TotalCount
+	if res := r.result(); res != nil && res.Data != nil {
+		return res.Data.TotalCount
 	}
 	return 0
 }
 
-// GetCapabilityIDs returns the IDs of capabilities from a list response
-func (r *ManageOrgDataResponse) GetCapabilityIDs() []string {
-	if r.Data == nil || r.Data.Result == nil {
+// GetCapabilities returns the capabilities from a list response
+func (r *ManageOrgDataResponse) GetCapabilities() []CapabilityInfo {
+	res := r.result()
+	if res == nil || res.Data == nil {
 		return nil
 	}
-	ids := make([]string, 0, len(r.Data.Result.Capabilities))
-	for _, cap := range r.Data.Result.Capabilities {
-		if cap.ID != "" {
-			ids = append(ids, cap.ID)
-		}
+	return res.Data.Capabilities
+}
+
+// IsListComplete reports whether a list response returned every capability.
+// The server does not cap totalCount, so returnedCount == totalCount proves the
+// list is complete even against a server that still limits the returned page.
+// An empty collection (both zero) is complete.
+func (r *ManageOrgDataResponse) IsListComplete() bool {
+	res := r.result()
+	if res == nil || res.Data == nil {
+		return false
 	}
-	return ids
+	return res.Data.ReturnedCount == res.Data.TotalCount
 }
 
 // MCPCapabilityScanClient handles HTTP communication with the MCP capability scan endpoint
@@ -184,8 +229,12 @@ func (c *MCPCapabilityScanClient) ListCapabilities(ctx context.Context) (int, er
 	return resp.GetTotalCount(), nil
 }
 
-// ListCapabilityIDs returns all capability IDs from the database
-func (c *MCPCapabilityScanClient) ListCapabilityIDs(ctx context.Context) ([]string, error) {
+// ListCapabilityInfos returns all capabilities (id + resourceName) from the
+// database, along with whether the returned list is complete. Completeness is
+// derived from returnedCount == totalCount; because the server does not cap
+// totalCount, this holds even against a server that still limits the returned
+// page. An incomplete list must not drive deletions.
+func (c *MCPCapabilityScanClient) ListCapabilityInfos(ctx context.Context) ([]CapabilityInfo, bool, error) {
 	// Use a large limit to get all capabilities
 	// Most clusters have < 1000 CRDs, so this should be sufficient
 	req := ManageOrgDataRequest{
@@ -197,14 +246,14 @@ func (c *MCPCapabilityScanClient) ListCapabilityIDs(ctx context.Context) ([]stri
 
 	resp, err := c.sendWithRetry(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if !resp.Success {
-		return nil, fmt.Errorf("MCP returned error: %s", resp.GetErrorMessage())
+		return nil, false, fmt.Errorf("MCP returned error: %s", resp.GetErrorMessage())
 	}
 
-	return resp.GetCapabilityIDs(), nil
+	return resp.GetCapabilities(), resp.IsListComplete(), nil
 }
 
 // TriggerFullScan triggers a full cluster capability scan
@@ -293,7 +342,7 @@ func (c *MCPCapabilityScanClient) sendWithRetry(ctx context.Context, req ManageO
 		}
 
 		resp, err := c.send(ctx, req)
-		if err == nil && resp.Success {
+		if err == nil && resp.Success && !resp.HasResultError() {
 			return resp, nil
 		}
 
@@ -306,6 +355,17 @@ func (c *MCPCapabilityScanClient) sendWithRetry(ctx context.Context, req ManageO
 		} else if !resp.Success {
 			lastErr = fmt.Errorf("MCP returned error: %s", resp.GetErrorMessage())
 			logger.V(1).Info("MCP returned error response",
+				"attempt", attempt,
+				"error", resp.GetErrorMessage(),
+			)
+		} else {
+			// Envelope reports success but the operation result reports a
+			// failure (e.g. the vector backend is unavailable). Treat it as a
+			// retryable error so it is surfaced instead of masked as an empty
+			// result — otherwise a not-ready backend looks like an empty
+			// collection on a fresh install.
+			lastErr = fmt.Errorf("MCP operation failed: %s", resp.GetErrorMessage())
+			logger.V(1).Info("MCP operation reported failure",
 				"attempt", attempt,
 				"error", resp.GetErrorMessage(),
 			)
@@ -400,10 +460,7 @@ func (c *MCPCapabilityScanClient) send(ctx context.Context, req ManageOrgDataReq
 	if resp.StatusCode >= 400 {
 		return &ManageOrgDataResponse{
 			Success: false,
-			Error: &struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			}{
+			Error: &ManageOrgDataError{
 				Code:    fmt.Sprintf("%d", resp.StatusCode),
 				Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(responseBody)),
 			},

@@ -233,29 +233,48 @@ func (r *CapabilityScanReconciler) performStartupReconciliation(ctx context.Cont
 	logger.Info("Starting reconciliation", "config", configKey)
 
 	// List all resources in cluster using Discovery API (with filters applied)
-	clusterResources, err := r.listAllResourceIDs(ctx, state.config)
+	clusterResources, clusterComplete, err := r.listAllResourceIDs(ctx, state.config)
 	if err != nil {
 		logger.Error(err, "❌ Failed to list cluster resources")
 		r.updateStatusByKey(ctx, configKey, false, err.Error())
 		return
 	}
-	logger.Info("Found cluster resources", "count", len(clusterResources))
+	logger.Info("Found cluster resources", "count", len(clusterResources), "complete", clusterComplete)
 
-	// List all capability IDs from MCP
-	mcpCapabilities, err := state.mcpClient.ListCapabilityIDs(ctx)
+	// List all capabilities from MCP (id for deletion, resourceName for matching)
+	mcpCaps, mcpComplete, err := state.mcpClient.ListCapabilityInfos(ctx)
 	if err != nil {
 		logger.Error(err, "❌ Failed to list MCP capabilities")
 		r.updateStatusByKey(ctx, configKey, false, err.Error())
 		return
 	}
-	logger.Info("Found MCP capabilities", "count", len(mcpCapabilities))
+
+	// Match on resourceName ("Kind.group"); keep id (UUID) for deletion.
+	mcpResourceNames := make([]string, 0, len(mcpCaps))
+	idByResourceName := make(map[string]string, len(mcpCaps))
+	for _, capInfo := range mcpCaps {
+		if capInfo.ResourceName == "" {
+			continue
+		}
+		mcpResourceNames = append(mcpResourceNames, capInfo.ResourceName)
+		idByResourceName[capInfo.ResourceName] = capInfo.ID
+	}
+	logger.Info("Found MCP capabilities", "count", len(mcpResourceNames), "complete", mcpComplete)
 
 	// Compute diff
-	toScan, toDelete := computeCapabilityDiff(clusterResources, mcpCapabilities)
+	toScan, toDelete := computeCapabilityDiff(clusterResources, mcpResourceNames)
+
+	// A capability may be deleted only when both sides of the diff are provably
+	// complete. Scanning is additive and idempotent, so scanning missing
+	// resources is always safe; deleting from a truncated MCP list or a partial
+	// cluster discovery would remove valid capabilities and force expensive
+	// re-inference.
+	deletionsSafe := clusterComplete && mcpComplete
 
 	logger.Info("Computed capability diff",
 		"toScan", len(toScan),
 		"toDelete", len(toDelete),
+		"deletionsSafe", deletionsSafe,
 	)
 
 	// Scan missing resources (if any)
@@ -271,18 +290,41 @@ func (r *CapabilityScanReconciler) performStartupReconciliation(ctx context.Cont
 		}
 	}
 
-	// Delete orphaned capabilities (if any)
-	if len(toDelete) > 0 {
+	// Delete orphaned capabilities (only when the diff is provably complete)
+	switch {
+	case len(toDelete) == 0:
+		// nothing to delete
+	case deletionsSafe:
 		logger.Info("Deleting orphaned capabilities", "count", len(toDelete))
-		for _, id := range toDelete {
+		for _, resourceName := range toDelete {
+			id := idByResourceName[resourceName]
+			if id == "" {
+				id = resourceName
+			}
 			if err := state.mcpClient.DeleteCapability(ctx, id); err != nil {
-				logger.Error(err, "❌ Failed to delete orphaned capability", "id", id)
+				logger.Error(err, "❌ Failed to delete orphaned capability", "resource", resourceName, "id", id)
 				// Continue deleting others even if one fails
 			} else {
-				logger.V(1).Info("Deleted orphaned capability", "id", id)
+				logger.V(1).Info("Deleted orphaned capability", "resource", resourceName, "id", id)
 			}
 		}
 		logger.Info("✅ Orphaned capabilities cleanup complete")
+	default:
+		logger.Info("Skipping orphaned-capability deletion: resource list is incomplete",
+			"toDelete", len(toDelete),
+			"clusterComplete", clusterComplete,
+			"mcpComplete", mcpComplete,
+		)
+	}
+
+	// Record diff completeness so an incomplete-but-functioning state is visible
+	// rather than looking healthier than it is.
+	if deletionsSafe {
+		r.recordDiffCompleteness(ctx, configKey, true, "DiffComplete",
+			"Cluster and MCP resource lists are complete; full diff applied")
+	} else {
+		r.recordDiffCompleteness(ctx, configKey, false, "IncompleteResourceList",
+			incompletenessMessage(clusterComplete, mcpComplete))
 	}
 
 	if len(toScan) == 0 && len(toDelete) == 0 {
@@ -322,6 +364,66 @@ func computeCapabilityDiff(clusterCRDs, mcpCapabilities []string) (toScan, toDel
 	}
 
 	return toScan, toDelete
+}
+
+// incompletenessMessage explains why orphaned-capability deletions were
+// suppressed for a given completeness state.
+func incompletenessMessage(clusterComplete, mcpComplete bool) string {
+	switch {
+	case !clusterComplete && !mcpComplete:
+		return "Cluster discovery and MCP capability list are both incomplete; deletions suppressed to avoid removing valid capabilities"
+	case !clusterComplete:
+		return "Cluster discovery returned partial results; deletions suppressed to avoid removing valid capabilities"
+	default:
+		return "MCP capability list was truncated; deletions suppressed to avoid removing valid capabilities"
+	}
+}
+
+// upsertCondition sets or replaces a condition by type, preserving
+// LastTransitionTime when the status is unchanged.
+func upsertCondition(conditions []metav1.Condition, cond metav1.Condition) []metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == cond.Type {
+			if conditions[i].Status == cond.Status {
+				cond.LastTransitionTime = conditions[i].LastTransitionTime
+			}
+			conditions[i] = cond
+			return conditions
+		}
+	}
+	return append(conditions, cond)
+}
+
+// recordDiffCompleteness sets the DiffComplete condition, which reports whether
+// the last reconcile could safely apply deletions. It is deliberately separate
+// from Ready: a config with an incomplete diff is degraded but still functioning
+// (scans still happen), so it must not look either healthier or unhealthier than
+// it is.
+func (r *CapabilityScanReconciler) recordDiffCompleteness(ctx context.Context, key string, complete bool, reason, message string) {
+	logger := logf.Log.WithName("capabilityscan")
+
+	namespace, name := parseConfigKey(key)
+	fresh := &dotaiv1alpha1.CapabilityScanConfig{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, fresh); err != nil {
+		logger.V(1).Info("Failed to fetch CapabilityScanConfig for DiffComplete update", "error", err)
+		return
+	}
+
+	status := metav1.ConditionTrue
+	if !complete {
+		status = metav1.ConditionFalse
+	}
+	fresh.Status.Conditions = upsertCondition(fresh.Status.Conditions, metav1.Condition{
+		Type:               "DiffComplete",
+		Status:             status,
+		LastTransitionTime: metav1.NewTime(time.Now()),
+		Reason:             reason,
+		Message:            message,
+	})
+
+	if err := r.Status().Update(ctx, fresh); err != nil && !apierrors.IsConflict(err) {
+		logger.Error(err, "Failed to update DiffComplete condition")
+	}
 }
 
 // HandleCRDEvent processes CRD create/delete events by queuing them to the debounce buffer
@@ -404,20 +506,24 @@ func (r *CapabilityScanReconciler) listClusterCRDIDs(ctx context.Context, config
 
 // listAllResourceIDs lists ALL resource types (core + CRDs) using Discovery API
 // and returns their capability IDs with filters applied
-func (r *CapabilityScanReconciler) listAllResourceIDs(ctx context.Context, config *dotaiv1alpha1.CapabilityScanConfig) ([]string, error) {
+func (r *CapabilityScanReconciler) listAllResourceIDs(ctx context.Context, config *dotaiv1alpha1.CapabilityScanConfig) ([]string, bool, error) {
 	logger := logf.FromContext(ctx).WithName("capabilityscan")
 
 	if r.discoveryClient == nil {
-		return nil, fmt.Errorf("discovery client not initialized")
+		return nil, false, fmt.Errorf("discovery client not initialized")
 	}
 
-	// Get all API resources using Discovery API
+	// Get all API resources using Discovery API. Discovery can return partial
+	// results with errors for unavailable API groups (e.g. an aggregated
+	// APIService mid-restart); the list is then usable but incomplete, which
+	// must suppress deletions downstream.
+	complete := true
 	_, resources, err := r.discoveryClient.ServerGroupsAndResources()
 	if err != nil {
-		// Discovery can return partial results with errors for unavailable API groups
 		if !discovery.IsGroupDiscoveryFailedError(err) {
-			return nil, fmt.Errorf("failed to discover API resources: %w", err)
+			return nil, false, fmt.Errorf("failed to discover API resources: %w", err)
 		}
+		complete = false
 		logger.V(1).Info("Partial discovery failure (some API groups unavailable)", "error", err)
 	}
 
@@ -466,7 +572,7 @@ func (r *CapabilityScanReconciler) listAllResourceIDs(ctx context.Context, confi
 		}
 	}
 
-	return ids, nil
+	return ids, complete, nil
 }
 
 // shouldProcessResource checks if a resource matches include/exclude filters
