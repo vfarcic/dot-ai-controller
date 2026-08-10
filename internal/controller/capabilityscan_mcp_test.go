@@ -129,6 +129,7 @@ func TestMCPCapabilityScanClient_ListCapabilityInfos(t *testing.T) {
 		serverResponse    string // JSON response
 		serverStatus      int
 		wantResourceNames []string
+		wantIDs           []string
 		wantComplete      bool
 		wantErr           bool
 	}{
@@ -153,6 +154,7 @@ func TestMCPCapabilityScanClient_ListCapabilityInfos(t *testing.T) {
 			}`,
 			serverStatus:      http.StatusOK,
 			wantResourceNames: []string{"RDSInstance.database.aws.crossplane.io", "Bucket.s3.aws.crossplane.io", "Deployment.apps"},
+			wantIDs:           []string{"1111", "2222", "3333"},
 			wantComplete:      true,
 			wantErr:           false,
 		},
@@ -175,6 +177,7 @@ func TestMCPCapabilityScanClient_ListCapabilityInfos(t *testing.T) {
 			}`,
 			serverStatus:      http.StatusOK,
 			wantResourceNames: []string{"RDSInstance.database.aws.crossplane.io"},
+			wantIDs:           []string{"1111"},
 			wantComplete:      false,
 			wantErr:           false,
 		},
@@ -278,6 +281,9 @@ func TestMCPCapabilityScanClient_ListCapabilityInfos(t *testing.T) {
 			for i, c := range caps {
 				if i < len(tt.wantResourceNames) && c.ResourceName != tt.wantResourceNames[i] {
 					t.Errorf("ListCapabilityInfos()[%d].ResourceName = %s, want %s", i, c.ResourceName, tt.wantResourceNames[i])
+				}
+				if i < len(tt.wantIDs) && c.ID != tt.wantIDs[i] {
+					t.Errorf("ListCapabilityInfos()[%d].ID = %s, want %s", i, c.ID, tt.wantIDs[i])
 				}
 			}
 		})
@@ -394,11 +400,27 @@ func TestMCPCapabilityScanClient_TriggerScan(t *testing.T) {
 			wantErr:      false,
 		},
 		{
-			name:           "multiple resources",
-			resourceList:   "RDSInstance.database.aws.crossplane.io,Bucket.s3.aws.crossplane.io",
+			name:         "multiple resources",
+			resourceList: "RDSInstance.database.aws.crossplane.io,Bucket.s3.aws.crossplane.io",
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": true,
+						"status": "started",
+						"message": "Scan initiated for 2 resources"
+					}
+				}
+			}`,
+			serverStatus: http.StatusOK,
+			wantErr:      false,
+		},
+		{
+			name:           "missing nested result is a failure",
+			resourceList:   "RDSInstance.database.aws.crossplane.io",
 			serverResponse: `{"success": true}`,
 			serverStatus:   http.StatusOK,
-			wantErr:        false,
+			wantErr:        true,
 		},
 	}
 
@@ -698,7 +720,7 @@ func TestManageOrgDataResponse_IsListComplete(t *testing.T) {
 			name: "returned equals total",
 			response: ManageOrgDataResponse{
 				Data: &ManageOrgDataEnvelope{Result: &ManageOrgDataResult{
-					Data: &ManageOrgDataListData{TotalCount: 5, ReturnedCount: 5},
+					Data: &ManageOrgDataListData{TotalCount: ptr.To(5), ReturnedCount: ptr.To(5)},
 				}},
 			},
 			want: true,
@@ -707,7 +729,7 @@ func TestManageOrgDataResponse_IsListComplete(t *testing.T) {
 			name: "returned less than total",
 			response: ManageOrgDataResponse{
 				Data: &ManageOrgDataEnvelope{Result: &ManageOrgDataResult{
-					Data: &ManageOrgDataListData{TotalCount: 250, ReturnedCount: 100},
+					Data: &ManageOrgDataListData{TotalCount: ptr.To(250), ReturnedCount: ptr.To(100)},
 				}},
 			},
 			want: false,
@@ -716,10 +738,19 @@ func TestManageOrgDataResponse_IsListComplete(t *testing.T) {
 			name: "empty collection",
 			response: ManageOrgDataResponse{
 				Data: &ManageOrgDataEnvelope{Result: &ManageOrgDataResult{
-					Data: &ManageOrgDataListData{TotalCount: 0, ReturnedCount: 0},
+					Data: &ManageOrgDataListData{TotalCount: ptr.To(0), ReturnedCount: ptr.To(0)},
 				}},
 			},
 			want: true,
+		},
+		{
+			name: "omitted counts is not complete",
+			response: ManageOrgDataResponse{
+				Data: &ManageOrgDataEnvelope{Result: &ManageOrgDataResult{
+					Data: &ManageOrgDataListData{},
+				}},
+			},
+			want: false,
 		},
 		{
 			name:     "no data is not complete",

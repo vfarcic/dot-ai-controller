@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
@@ -299,7 +300,10 @@ func (r *CapabilityScanReconciler) performStartupReconciliation(ctx context.Cont
 		for _, resourceName := range toDelete {
 			id := idByResourceName[resourceName]
 			if id == "" {
-				id = resourceName
+				// No server-side UUID: deleting by resourceName cannot match by
+				// ID, so skip and let the next reconcile retry once MCP has an id.
+				logger.Info("Skipping orphaned capability without an MCP id", "resource", resourceName)
+				continue
 			}
 			if err := state.mcpClient.DeleteCapability(ctx, id); err != nil {
 				logger.Error(err, "❌ Failed to delete orphaned capability", "resource", resourceName, "id", id)
@@ -379,21 +383,6 @@ func incompletenessMessage(clusterComplete, mcpComplete bool) string {
 	}
 }
 
-// upsertCondition sets or replaces a condition by type, preserving
-// LastTransitionTime when the status is unchanged.
-func upsertCondition(conditions []metav1.Condition, cond metav1.Condition) []metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == cond.Type {
-			if conditions[i].Status == cond.Status {
-				cond.LastTransitionTime = conditions[i].LastTransitionTime
-			}
-			conditions[i] = cond
-			return conditions
-		}
-	}
-	return append(conditions, cond)
-}
-
 // recordDiffCompleteness sets the DiffComplete condition, which reports whether
 // the last reconcile could safely apply deletions. It is deliberately separate
 // from Ready: a config with an incomplete diff is degraded but still functioning
@@ -413,10 +402,10 @@ func (r *CapabilityScanReconciler) recordDiffCompleteness(ctx context.Context, k
 	if !complete {
 		status = metav1.ConditionFalse
 	}
-	fresh.Status.Conditions = upsertCondition(fresh.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&fresh.Status.Conditions, metav1.Condition{
 		Type:               "DiffComplete",
 		Status:             status,
-		LastTransitionTime: metav1.NewTime(time.Now()),
+		ObservedGeneration: fresh.Generation,
 		Reason:             reason,
 		Message:            message,
 	})

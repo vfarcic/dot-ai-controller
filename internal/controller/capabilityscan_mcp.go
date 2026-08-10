@@ -44,10 +44,13 @@ type CapabilityInfo struct {
 
 // ManageOrgDataListData holds the list payload. The MCP server nests it under
 // result.data (i.e. data.result.data.{capabilities,totalCount,returnedCount}).
+// TotalCount and ReturnedCount are pointers so an omitted count is distinguished
+// from a real zero; a missing count leaves completeness unproven and must block
+// deletions rather than pass a 0 == 0 check.
 type ManageOrgDataListData struct {
 	Capabilities  []CapabilityInfo `json:"capabilities,omitempty"`
-	TotalCount    int              `json:"totalCount,omitempty"`
-	ReturnedCount int              `json:"returnedCount,omitempty"`
+	TotalCount    *int             `json:"totalCount,omitempty"`
+	ReturnedCount *int             `json:"returnedCount,omitempty"`
 }
 
 // ManageOrgDataResult is the operation result nested under data.result.
@@ -103,19 +106,20 @@ func (r *ManageOrgDataResponse) GetErrorMessage() string {
 	return "unknown error"
 }
 
-// HasResultError reports whether the envelope succeeded but the nested
-// operation result reports a failure. manageOrgData catches every error and
-// returns HTTP 200 with the transport Success flag set, so the operation
-// outcome only lives in data.result.success.
+// HasResultError reports whether the operation failed. manageOrgData catches
+// every error and returns HTTP 200 with the transport Success flag set, so the
+// operation outcome only lives in data.result.success. A missing nested result
+// is itself a failure: a bare {"success": true} envelope must not be accepted
+// as a completed operation.
 func (r *ManageOrgDataResponse) HasResultError() bool {
 	res := r.result()
-	return res != nil && !res.Success
+	return res == nil || !res.Success
 }
 
 // GetTotalCount returns the total count of capabilities from a list response
 func (r *ManageOrgDataResponse) GetTotalCount() int {
-	if res := r.result(); res != nil && res.Data != nil {
-		return res.Data.TotalCount
+	if res := r.result(); res != nil && res.Data != nil && res.Data.TotalCount != nil {
+		return *res.Data.TotalCount
 	}
 	return 0
 }
@@ -132,13 +136,15 @@ func (r *ManageOrgDataResponse) GetCapabilities() []CapabilityInfo {
 // IsListComplete reports whether a list response returned every capability.
 // The server does not cap totalCount, so returnedCount == totalCount proves the
 // list is complete even against a server that still limits the returned page.
-// An empty collection (both zero) is complete.
+// An empty collection (both zero) is complete. Both counts must be present: an
+// omitted count leaves completeness unproven, which must block deletions.
 func (r *ManageOrgDataResponse) IsListComplete() bool {
 	res := r.result()
 	if res == nil || res.Data == nil {
 		return false
 	}
-	return res.Data.ReturnedCount == res.Data.TotalCount
+	d := res.Data
+	return d.TotalCount != nil && d.ReturnedCount != nil && *d.ReturnedCount == *d.TotalCount
 }
 
 // MCPCapabilityScanClient handles HTTP communication with the MCP capability scan endpoint
