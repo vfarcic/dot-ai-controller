@@ -14,92 +14,63 @@ import (
 func TestMCPCapabilityScanClient_ListCapabilities(t *testing.T) {
 	tests := []struct {
 		name           string
-		serverResponse ManageOrgDataResponse
+		serverResponse string // JSON response
 		serverStatus   int
 		wantCount      int
 		wantErr        bool
 	}{
 		{
 			name: "successful list with capabilities",
-			serverResponse: ManageOrgDataResponse{
-				Success: true,
-				Data: &struct {
-					Result *struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					} `json:"result,omitempty"`
-				}{
-					Result: &struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					}{
-						Success:    true,
-						TotalCount: 150,
-					},
-				},
-			},
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": true,
+						"data": {
+							"totalCount": 150,
+							"returnedCount": 150
+						}
+					}
+				}
+			}`,
 			serverStatus: http.StatusOK,
 			wantCount:    150,
 			wantErr:      false,
 		},
 		{
 			name: "successful list with zero capabilities",
-			serverResponse: ManageOrgDataResponse{
-				Success: true,
-				Data: &struct {
-					Result *struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					} `json:"result,omitempty"`
-				}{
-					Result: &struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					}{
-						Success:    true,
-						TotalCount: 0,
-					},
-				},
-			},
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": true,
+						"data": {
+							"totalCount": 0,
+							"returnedCount": 0
+						}
+					}
+				}
+			}`,
 			serverStatus: http.StatusOK,
 			wantCount:    0,
 			wantErr:      false,
 		},
 		{
 			name: "server error",
-			serverResponse: ManageOrgDataResponse{
-				Success: false,
-				Error: &struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				}{
-					Code:    "500",
-					Message: "Internal server error",
-				},
-			},
+			serverResponse: `{
+				"success": false,
+				"error": {
+					"code": "500",
+					"message": "Internal server error"
+				}
+			}`,
 			serverStatus: http.StatusOK,
 			wantCount:    0,
 			wantErr:      true,
 		},
 		{
 			name:           "HTTP error",
-			serverResponse: ManageOrgDataResponse{},
+			serverResponse: `{}`,
 			serverStatus:   http.StatusInternalServerError,
 			wantCount:      0,
 			wantErr:        true,
@@ -109,7 +80,6 @@ func TestMCPCapabilityScanClient_ListCapabilities(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Verify request
 				if r.Method != "POST" {
 					t.Errorf("Expected POST, got %s", r.Method)
 				}
@@ -117,13 +87,10 @@ func TestMCPCapabilityScanClient_ListCapabilities(t *testing.T) {
 					t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
 				}
 
-				// Parse request body
 				var req ManageOrgDataRequest
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Errorf("Failed to decode request: %v", err)
 				}
-
-				// Verify request fields
 				if req.DataType != "capabilities" {
 					t.Errorf("Expected dataType=capabilities, got %s", req.DataType)
 				}
@@ -132,14 +99,14 @@ func TestMCPCapabilityScanClient_ListCapabilities(t *testing.T) {
 				}
 
 				w.WriteHeader(tt.serverStatus)
-				json.NewEncoder(w).Encode(tt.serverResponse)
+				_, _ = w.Write([]byte(tt.serverResponse))
 			}))
 			defer server.Close()
 
 			client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
 				Endpoint:       server.URL,
 				Collection:     "test-capabilities",
-				MaxRetries:     ptr.To(1),
+				MaxRetries:     ptr.To(0),
 				InitialBackoff: 10 * time.Millisecond,
 			})
 
@@ -156,67 +123,102 @@ func TestMCPCapabilityScanClient_ListCapabilities(t *testing.T) {
 	}
 }
 
-func TestMCPCapabilityScanClient_ListCapabilityIDs(t *testing.T) {
+func TestMCPCapabilityScanClient_ListCapabilityInfos(t *testing.T) {
 	tests := []struct {
-		name           string
-		serverResponse string // JSON response
-		serverStatus   int
-		wantIDs        []string
-		wantErr        bool
+		name              string
+		serverResponse    string // JSON response
+		serverStatus      int
+		wantResourceNames []string
+		wantIDs           []string
+		wantComplete      bool
+		wantErr           bool
 	}{
 		{
-			name: "successful list with capabilities",
+			name: "successful complete list",
 			serverResponse: `{
 				"success": true,
 				"data": {
 					"result": {
 						"success": true,
-						"capabilities": [
-							{"id": "RDSInstance.database.aws.crossplane.io"},
-							{"id": "Bucket.s3.aws.crossplane.io"},
-							{"id": "Deployment.apps"}
-						],
-						"totalCount": 3
+						"data": {
+							"capabilities": [
+								{"id": "1111", "resourceName": "RDSInstance.database.aws.crossplane.io"},
+								{"id": "2222", "resourceName": "Bucket.s3.aws.crossplane.io"},
+								{"id": "3333", "resourceName": "Deployment.apps"}
+							],
+							"totalCount": 3,
+							"returnedCount": 3
+						}
 					}
 				}
 			}`,
-			serverStatus: http.StatusOK,
-			wantIDs:      []string{"RDSInstance.database.aws.crossplane.io", "Bucket.s3.aws.crossplane.io", "Deployment.apps"},
-			wantErr:      false,
+			serverStatus:      http.StatusOK,
+			wantResourceNames: []string{"RDSInstance.database.aws.crossplane.io", "Bucket.s3.aws.crossplane.io", "Deployment.apps"},
+			wantIDs:           []string{"1111", "2222", "3333"},
+			wantComplete:      true,
+			wantErr:           false,
 		},
 		{
-			name: "successful list with empty capabilities",
+			name: "truncated list is incomplete",
 			serverResponse: `{
 				"success": true,
 				"data": {
 					"result": {
 						"success": true,
-						"capabilities": [],
-						"totalCount": 0
+						"data": {
+							"capabilities": [
+								{"id": "1111", "resourceName": "RDSInstance.database.aws.crossplane.io"}
+							],
+							"totalCount": 250,
+							"returnedCount": 100
+						}
 					}
 				}
 			}`,
-			serverStatus: http.StatusOK,
-			wantIDs:      []string{},
-			wantErr:      false,
+			serverStatus:      http.StatusOK,
+			wantResourceNames: []string{"RDSInstance.database.aws.crossplane.io"},
+			wantIDs:           []string{"1111"},
+			wantComplete:      false,
+			wantErr:           false,
 		},
 		{
-			name: "successful list with nil capabilities",
+			name: "empty collection is complete",
 			serverResponse: `{
 				"success": true,
 				"data": {
 					"result": {
 						"success": true,
-						"totalCount": 0
+						"data": {
+							"capabilities": [],
+							"totalCount": 0,
+							"returnedCount": 0
+						}
 					}
 				}
 			}`,
-			serverStatus: http.StatusOK,
-			wantIDs:      []string{},
-			wantErr:      false,
+			serverStatus:      http.StatusOK,
+			wantResourceNames: []string{},
+			wantComplete:      true,
+			wantErr:           false,
 		},
 		{
-			name: "server error",
+			name: "inner success false surfaces as error",
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": false,
+						"message": "Vector DB (Qdrant) connection required"
+					}
+				}
+			}`,
+			serverStatus:      http.StatusOK,
+			wantResourceNames: nil,
+			wantComplete:      false,
+			wantErr:           true,
+		},
+		{
+			name: "envelope error",
 			serverResponse: `{
 				"success": false,
 				"error": {
@@ -224,35 +226,33 @@ func TestMCPCapabilityScanClient_ListCapabilityIDs(t *testing.T) {
 					"message": "Internal server error"
 				}
 			}`,
-			serverStatus: http.StatusOK,
-			wantIDs:      nil,
-			wantErr:      true,
+			serverStatus:      http.StatusOK,
+			wantResourceNames: nil,
+			wantComplete:      false,
+			wantErr:           true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Verify request
 				var req ManageOrgDataRequest
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Errorf("Failed to decode request: %v", err)
 				}
-
-				// Verify request fields
 				if req.DataType != "capabilities" {
 					t.Errorf("Expected dataType=capabilities, got %s", req.DataType)
 				}
 				if req.Operation != "list" {
 					t.Errorf("Expected operation=list, got %s", req.Operation)
 				}
-				// ListCapabilityIDs should use a large limit
+				// ListCapabilityInfos should use a large limit
 				if req.Limit < 1000 {
-					t.Errorf("Expected large limit for ListCapabilityIDs, got %d", req.Limit)
+					t.Errorf("Expected large limit for ListCapabilityInfos, got %d", req.Limit)
 				}
 
 				w.WriteHeader(tt.serverStatus)
-				w.Write([]byte(tt.serverResponse))
+				_, _ = w.Write([]byte(tt.serverResponse))
 			}))
 			defer server.Close()
 
@@ -263,21 +263,27 @@ func TestMCPCapabilityScanClient_ListCapabilityIDs(t *testing.T) {
 				InitialBackoff: 10 * time.Millisecond,
 			})
 
-			ids, err := client.ListCapabilityIDs(context.Background())
+			caps, complete, err := client.ListCapabilityInfos(context.Background())
 
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ListCapabilityIDs() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ListCapabilityInfos() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-
-			if !tt.wantErr {
-				if len(ids) != len(tt.wantIDs) {
-					t.Errorf("ListCapabilityIDs() returned %d IDs, want %d", len(ids), len(tt.wantIDs))
+			if tt.wantErr {
+				return
+			}
+			if complete != tt.wantComplete {
+				t.Errorf("ListCapabilityInfos() complete = %v, want %v", complete, tt.wantComplete)
+			}
+			if len(caps) != len(tt.wantResourceNames) {
+				t.Errorf("ListCapabilityInfos() returned %d capabilities, want %d", len(caps), len(tt.wantResourceNames))
+			}
+			for i, c := range caps {
+				if i < len(tt.wantResourceNames) && c.ResourceName != tt.wantResourceNames[i] {
+					t.Errorf("ListCapabilityInfos()[%d].ResourceName = %s, want %s", i, c.ResourceName, tt.wantResourceNames[i])
 				}
-				for i, id := range ids {
-					if i < len(tt.wantIDs) && id != tt.wantIDs[i] {
-						t.Errorf("ListCapabilityIDs()[%d] = %s, want %s", i, id, tt.wantIDs[i])
-					}
+				if i < len(tt.wantIDs) && c.ID != tt.wantIDs[i] {
+					t.Errorf("ListCapabilityInfos()[%d].ID = %s, want %s", i, c.ID, tt.wantIDs[i])
 				}
 			}
 		})
@@ -287,53 +293,48 @@ func TestMCPCapabilityScanClient_ListCapabilityIDs(t *testing.T) {
 func TestMCPCapabilityScanClient_TriggerFullScan(t *testing.T) {
 	tests := []struct {
 		name           string
-		serverResponse ManageOrgDataResponse
+		serverResponse string
 		serverStatus   int
 		wantErr        bool
 	}{
 		{
 			name: "successful full scan",
-			serverResponse: ManageOrgDataResponse{
-				Success: true,
-				Data: &struct {
-					Result *struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					} `json:"result,omitempty"`
-				}{
-					Result: &struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					}{
-						Success: true,
-						Status:  "started",
-						Message: "Full capability scan initiated in background",
-					},
-				},
-			},
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": true,
+						"status": "started",
+						"message": "Full capability scan initiated in background"
+					}
+				}
+			}`,
 			serverStatus: http.StatusOK,
 			wantErr:      false,
 		},
 		{
-			name: "server returns error",
-			serverResponse: ManageOrgDataResponse{
-				Success: false,
-				Error: &struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				}{
-					Code:    "ERROR",
-					Message: "Scan failed",
-				},
-			},
+			name: "envelope error",
+			serverResponse: `{
+				"success": false,
+				"error": {
+					"code": "ERROR",
+					"message": "Scan failed"
+				}
+			}`,
+			serverStatus: http.StatusOK,
+			wantErr:      true,
+		},
+		{
+			name: "inner result failure",
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": false,
+						"message": "Vector DB (Qdrant) connection required"
+					}
+				}
+			}`,
 			serverStatus: http.StatusOK,
 			wantErr:      true,
 		},
@@ -346,8 +347,6 @@ func TestMCPCapabilityScanClient_TriggerFullScan(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Errorf("Failed to decode request: %v", err)
 				}
-
-				// Verify request fields for full scan
 				if req.Operation != "scan" {
 					t.Errorf("Expected operation=scan, got %s", req.Operation)
 				}
@@ -356,14 +355,14 @@ func TestMCPCapabilityScanClient_TriggerFullScan(t *testing.T) {
 				}
 
 				w.WriteHeader(tt.serverStatus)
-				json.NewEncoder(w).Encode(tt.serverResponse)
+				_, _ = w.Write([]byte(tt.serverResponse))
 			}))
 			defer server.Close()
 
 			client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
 				Endpoint:       server.URL,
 				Collection:     "test-capabilities",
-				MaxRetries:     ptr.To(1),
+				MaxRetries:     ptr.To(0),
 				InitialBackoff: 10 * time.Millisecond,
 			})
 
@@ -380,50 +379,48 @@ func TestMCPCapabilityScanClient_TriggerScan(t *testing.T) {
 	tests := []struct {
 		name           string
 		resourceList   string
-		serverResponse ManageOrgDataResponse
+		serverResponse string
 		serverStatus   int
 		wantErr        bool
 	}{
 		{
 			name:         "successful targeted scan",
 			resourceList: "RDSInstance.database.aws.crossplane.io",
-			serverResponse: ManageOrgDataResponse{
-				Success: true,
-				Data: &struct {
-					Result *struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					} `json:"result,omitempty"`
-				}{
-					Result: &struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					}{
-						Success: true,
-						Status:  "started",
-						Message: "Scan initiated for 1 resources",
-					},
-				},
-			},
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": true,
+						"status": "started",
+						"message": "Scan initiated for 1 resources"
+					}
+				}
+			}`,
 			serverStatus: http.StatusOK,
 			wantErr:      false,
 		},
 		{
 			name:         "multiple resources",
 			resourceList: "RDSInstance.database.aws.crossplane.io,Bucket.s3.aws.crossplane.io",
-			serverResponse: ManageOrgDataResponse{
-				Success: true,
-			},
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": true,
+						"status": "started",
+						"message": "Scan initiated for 2 resources"
+					}
+				}
+			}`,
 			serverStatus: http.StatusOK,
 			wantErr:      false,
+		},
+		{
+			name:           "missing nested result is a failure",
+			resourceList:   "RDSInstance.database.aws.crossplane.io",
+			serverResponse: `{"success": true}`,
+			serverStatus:   http.StatusOK,
+			wantErr:        true,
 		},
 	}
 
@@ -434,8 +431,6 @@ func TestMCPCapabilityScanClient_TriggerScan(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Errorf("Failed to decode request: %v", err)
 				}
-
-				// Verify request fields for targeted scan
 				if req.Operation != "scan" {
 					t.Errorf("Expected operation=scan, got %s", req.Operation)
 				}
@@ -447,14 +442,14 @@ func TestMCPCapabilityScanClient_TriggerScan(t *testing.T) {
 				}
 
 				w.WriteHeader(tt.serverStatus)
-				json.NewEncoder(w).Encode(tt.serverResponse)
+				_, _ = w.Write([]byte(tt.serverResponse))
 			}))
 			defer server.Close()
 
 			client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
 				Endpoint:       server.URL,
 				Collection:     "test-capabilities",
-				MaxRetries:     ptr.To(1),
+				MaxRetries:     ptr.To(0),
 				InitialBackoff: 10 * time.Millisecond,
 			})
 
@@ -471,55 +466,36 @@ func TestMCPCapabilityScanClient_DeleteCapability(t *testing.T) {
 	tests := []struct {
 		name           string
 		capabilityID   string
-		serverResponse ManageOrgDataResponse
+		serverResponse string
 		serverStatus   int
 		wantErr        bool
 	}{
 		{
 			name:         "successful delete",
-			capabilityID: "RDSInstance.database.aws.crossplane.io",
-			serverResponse: ManageOrgDataResponse{
-				Success: true,
-				Data: &struct {
-					Result *struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					} `json:"result,omitempty"`
-				}{
-					Result: &struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					}{
-						Success:   true,
-						Operation: "delete",
-						Message:   "Capability deleted successfully",
-					},
-				},
-			},
+			capabilityID: "1111-2222-3333",
+			serverResponse: `{
+				"success": true,
+				"data": {
+					"result": {
+						"success": true,
+						"operation": "delete",
+						"message": "Capability deleted successfully"
+					}
+				}
+			}`,
 			serverStatus: http.StatusOK,
 			wantErr:      false,
 		},
 		{
 			name:         "delete not found",
-			capabilityID: "NonExistent.example.com",
-			serverResponse: ManageOrgDataResponse{
-				Success: false,
-				Error: &struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				}{
-					Code:    "NOT_FOUND",
-					Message: "Capability not found",
-				},
-			},
+			capabilityID: "does-not-exist",
+			serverResponse: `{
+				"success": false,
+				"error": {
+					"code": "NOT_FOUND",
+					"message": "Capability not found"
+				}
+			}`,
 			serverStatus: http.StatusOK,
 			wantErr:      true,
 		},
@@ -532,8 +508,6 @@ func TestMCPCapabilityScanClient_DeleteCapability(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Errorf("Failed to decode request: %v", err)
 				}
-
-				// Verify request fields for delete
 				if req.Operation != "delete" {
 					t.Errorf("Expected operation=delete, got %s", req.Operation)
 				}
@@ -542,14 +516,14 @@ func TestMCPCapabilityScanClient_DeleteCapability(t *testing.T) {
 				}
 
 				w.WriteHeader(tt.serverStatus)
-				json.NewEncoder(w).Encode(tt.serverResponse)
+				_, _ = w.Write([]byte(tt.serverResponse))
 			}))
 			defer server.Close()
 
 			client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
 				Endpoint:       server.URL,
 				Collection:     "test-capabilities",
-				MaxRetries:     ptr.To(1),
+				MaxRetries:     ptr.To(0),
 				InitialBackoff: 10 * time.Millisecond,
 			})
 
@@ -569,45 +543,23 @@ func TestMCPCapabilityScanClient_RetryBehavior(t *testing.T) {
 		if attempts < 3 {
 			// Fail first 2 attempts
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(ManageOrgDataResponse{
-				Success: false,
-				Error: &struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				}{
-					Code:    "500",
-					Message: "Temporary error",
-				},
-			})
+			_, _ = w.Write([]byte(`{
+				"success": false,
+				"error": {"code": "500", "message": "Temporary error"}
+			}`))
 			return
 		}
 		// Succeed on 3rd attempt
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(ManageOrgDataResponse{
-			Success: true,
-			Data: &struct {
-				Result *struct {
-					Success      bool             `json:"success"`
-					Status       string           `json:"status,omitempty"`
-					Message      string           `json:"message,omitempty"`
-					Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-					TotalCount   int              `json:"totalCount,omitempty"`
-					Operation    string           `json:"operation,omitempty"`
-				} `json:"result,omitempty"`
-			}{
-				Result: &struct {
-					Success      bool             `json:"success"`
-					Status       string           `json:"status,omitempty"`
-					Message      string           `json:"message,omitempty"`
-					Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-					TotalCount   int              `json:"totalCount,omitempty"`
-					Operation    string           `json:"operation,omitempty"`
-				}{
-					Success:    true,
-					TotalCount: 10,
-				},
-			},
-		})
+		_, _ = w.Write([]byte(`{
+			"success": true,
+			"data": {
+				"result": {
+					"success": true,
+					"data": {"totalCount": 10, "returnedCount": 10}
+				}
+			}
+		}`))
 	}))
 	defer server.Close()
 
@@ -629,6 +581,43 @@ func TestMCPCapabilityScanClient_RetryBehavior(t *testing.T) {
 	}
 	if attempts != 3 {
 		t.Errorf("Expected 3 attempts, got %d", attempts)
+	}
+}
+
+func TestMCPCapabilityScanClient_RetriesOnInnerFailure(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		// Envelope always succeeds, but the operation result reports a failure.
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"success": true,
+			"data": {
+				"result": {
+					"success": false,
+					"message": "Vector DB (Qdrant) connection required"
+				}
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewMCPCapabilityScanClient(MCPCapabilityScanClientConfig{
+		Endpoint:       server.URL,
+		Collection:     "test-capabilities",
+		MaxRetries:     ptr.To(2),
+		InitialBackoff: 10 * time.Millisecond,
+		MaxBackoff:     50 * time.Millisecond,
+	})
+
+	_, _, err := client.ListCapabilityInfos(context.Background())
+
+	if err == nil {
+		t.Errorf("Expected error when inner result reports failure, got nil")
+	}
+	// initial attempt + 2 retries
+	if attempts != 3 {
+		t.Errorf("Expected 3 attempts on inner failure, got %d", attempts)
 	}
 }
 
@@ -677,10 +666,7 @@ func TestManageOrgDataResponse_GetErrorMessage(t *testing.T) {
 		{
 			name: "error with message",
 			response: ManageOrgDataResponse{
-				Error: &struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				}{
+				Error: &ManageOrgDataError{
 					Code:    "ERROR",
 					Message: "Something went wrong",
 				},
@@ -690,10 +676,7 @@ func TestManageOrgDataResponse_GetErrorMessage(t *testing.T) {
 		{
 			name: "error with code only",
 			response: ManageOrgDataResponse{
-				Error: &struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				}{
+				Error: &ManageOrgDataError{
 					Code: "ERR_500",
 				},
 			},
@@ -702,24 +685,8 @@ func TestManageOrgDataResponse_GetErrorMessage(t *testing.T) {
 		{
 			name: "message in result",
 			response: ManageOrgDataResponse{
-				Data: &struct {
-					Result *struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					} `json:"result,omitempty"`
-				}{
-					Result: &struct {
-						Success      bool             `json:"success"`
-						Status       string           `json:"status,omitempty"`
-						Message      string           `json:"message,omitempty"`
-						Capabilities []CapabilityInfo `json:"capabilities,omitempty"`
-						TotalCount   int              `json:"totalCount,omitempty"`
-						Operation    string           `json:"operation,omitempty"`
-					}{
+				Data: &ManageOrgDataEnvelope{
+					Result: &ManageOrgDataResult{
 						Message: "Result message",
 					},
 				},
@@ -738,6 +705,64 @@ func TestManageOrgDataResponse_GetErrorMessage(t *testing.T) {
 			got := tt.response.GetErrorMessage()
 			if got != tt.want {
 				t.Errorf("GetErrorMessage() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestManageOrgDataResponse_IsListComplete(t *testing.T) {
+	tests := []struct {
+		name     string
+		response ManageOrgDataResponse
+		want     bool
+	}{
+		{
+			name: "returned equals total",
+			response: ManageOrgDataResponse{
+				Data: &ManageOrgDataEnvelope{Result: &ManageOrgDataResult{
+					Data: &ManageOrgDataListData{TotalCount: ptr.To(5), ReturnedCount: ptr.To(5)},
+				}},
+			},
+			want: true,
+		},
+		{
+			name: "returned less than total",
+			response: ManageOrgDataResponse{
+				Data: &ManageOrgDataEnvelope{Result: &ManageOrgDataResult{
+					Data: &ManageOrgDataListData{TotalCount: ptr.To(250), ReturnedCount: ptr.To(100)},
+				}},
+			},
+			want: false,
+		},
+		{
+			name: "empty collection",
+			response: ManageOrgDataResponse{
+				Data: &ManageOrgDataEnvelope{Result: &ManageOrgDataResult{
+					Data: &ManageOrgDataListData{TotalCount: ptr.To(0), ReturnedCount: ptr.To(0)},
+				}},
+			},
+			want: true,
+		},
+		{
+			name: "omitted counts is not complete",
+			response: ManageOrgDataResponse{
+				Data: &ManageOrgDataEnvelope{Result: &ManageOrgDataResult{
+					Data: &ManageOrgDataListData{},
+				}},
+			},
+			want: false,
+		},
+		{
+			name:     "no data is not complete",
+			response: ManageOrgDataResponse{},
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.response.IsListComplete(); got != tt.want {
+				t.Errorf("IsListComplete() = %v, want %v", got, tt.want)
 			}
 		})
 	}
