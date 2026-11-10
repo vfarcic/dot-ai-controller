@@ -51,9 +51,11 @@ type ResourceSyncConfigSpec struct {
 	WatchNamespaces []string `json:"watchNamespaces,omitempty"`
 
 	// WatchNamespaceLabelSelector restricts resource instance watching to namespaces matching this label selector.
-	// Resolved once at controller startup; restart the controller to pick up new matching namespaces.
+	// Supports equality- and set-based syntax (e.g., "dot-ai.devopstoolkit.live/sync=true", "team in (a,b)").
+	// Resolved when the watcher starts; restart the controller to pick up new matching namespaces.
 	// Takes precedence over WatchNamespaces when both are set.
-	// Example: "dot-ai.devopstoolkit.live/sync=true"
+	// An invalid selector, or one that matches no namespace, is reported as an error and retried;
+	// the controller never falls back to watching all namespaces.
 	// +optional
 	WatchNamespaceLabelSelector string `json:"watchNamespaceLabelSelector,omitempty"`
 }
