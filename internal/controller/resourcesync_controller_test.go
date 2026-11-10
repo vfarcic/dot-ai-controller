@@ -37,43 +37,71 @@ var _ = Describe("ResourceSync Controller", func() {
 
 	Describe("shouldSkipResource", func() {
 		It("should skip core events", func() {
-			Expect(reconciler.shouldSkipResource("", "events")).To(BeTrue())
+			Expect(reconciler.shouldSkipResource("", "events", nil)).To(BeTrue())
 		})
 
 		It("should skip events.k8s.io events", func() {
-			Expect(reconciler.shouldSkipResource("events.k8s.io", "events")).To(BeTrue())
+			Expect(reconciler.shouldSkipResource("events.k8s.io", "events", nil)).To(BeTrue())
 		})
 
 		It("should skip coordination.k8s.io leases", func() {
-			Expect(reconciler.shouldSkipResource("coordination.k8s.io", "leases")).To(BeTrue())
+			Expect(reconciler.shouldSkipResource("coordination.k8s.io", "leases", nil)).To(BeTrue())
 		})
 
 		It("should skip discovery.k8s.io endpointslices", func() {
-			Expect(reconciler.shouldSkipResource("discovery.k8s.io", "endpointslices")).To(BeTrue())
+			Expect(reconciler.shouldSkipResource("discovery.k8s.io", "endpointslices", nil)).To(BeTrue())
 		})
 
 		It("should NOT skip pods", func() {
-			Expect(reconciler.shouldSkipResource("", "pods")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("", "pods", nil)).To(BeFalse())
 		})
 
 		It("should NOT skip deployments", func() {
-			Expect(reconciler.shouldSkipResource("apps", "deployments")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("apps", "deployments", nil)).To(BeFalse())
 		})
 
 		It("should NOT skip custom resources", func() {
-			Expect(reconciler.shouldSkipResource("dot-ai.devopstoolkit.live", "solutions")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("dot-ai.devopstoolkit.live", "solutions", nil)).To(BeFalse())
 		})
 
 		It("should NOT skip services", func() {
-			Expect(reconciler.shouldSkipResource("", "services")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("", "services", nil)).To(BeFalse())
 		})
 
 		It("should NOT skip configmaps", func() {
-			Expect(reconciler.shouldSkipResource("", "configmaps")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("", "configmaps", nil)).To(BeFalse())
 		})
 
 		It("should NOT skip secrets", func() {
-			Expect(reconciler.shouldSkipResource("", "secrets")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("", "secrets", nil)).To(BeFalse())
+		})
+
+		It("should skip resource not in includeResources", func() {
+			spec := &dotaiv1alpha1.ResourceSyncConfigSpec{
+				IncludeResources: []string{"deployments.apps"},
+			}
+			Expect(reconciler.shouldSkipResource("", "pods", spec)).To(BeTrue())
+		})
+
+		It("should NOT skip resource matching includeResources", func() {
+			spec := &dotaiv1alpha1.ResourceSyncConfigSpec{
+				IncludeResources: []string{"deployments.apps"},
+			}
+			Expect(reconciler.shouldSkipResource("apps", "deployments", spec)).To(BeFalse())
+		})
+
+		It("should skip resource matching excludeResources", func() {
+			spec := &dotaiv1alpha1.ResourceSyncConfigSpec{
+				ExcludeResources: []string{"secrets."},
+			}
+			Expect(reconciler.shouldSkipResource("", "secrets", spec)).To(BeTrue())
+		})
+
+		It("should skip resource matching wildcard excludeResources", func() {
+			spec := &dotaiv1alpha1.ResourceSyncConfigSpec{
+				ExcludeResources: []string{"*.monitoring.coreos.com"},
+			}
+			Expect(reconciler.shouldSkipResource("monitoring.coreos.com", "prometheuses", spec)).To(BeTrue())
 		})
 	})
 
@@ -730,7 +758,7 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(reconciler.ensureClients()).To(Succeed())
 
 			// Discover resources
-			gvrs, err := reconciler.discoverResources(testCtx)
+			gvrs, err := reconciler.discoverResources(testCtx, nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(len(gvrs)).To(BeNumerically(">", 0))
 
@@ -759,7 +787,7 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(reconciler.ensureClients()).To(Succeed())
 
 			// Discover resources
-			gvrs, err := reconciler.discoverResources(testCtx)
+			gvrs, err := reconciler.discoverResources(testCtx, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Check that skipped resources are not included
@@ -775,7 +803,7 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(reconciler.ensureClients()).To(Succeed())
 
 			// Discover resources
-			gvrs, err := reconciler.discoverResources(testCtx)
+			gvrs, err := reconciler.discoverResources(testCtx, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Check that no subresources are included

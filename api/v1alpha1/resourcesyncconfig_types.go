@@ -31,6 +31,31 @@ type ResourceSyncConfigSpec struct {
 	// +kubebuilder:validation:Maximum=1440
 	// +optional
 	ResyncIntervalMinutes int `json:"resyncIntervalMinutes,omitempty"`
+
+	// IncludeResources specifies patterns for resource types to watch and sync.
+	// Pattern format: "resource.group" (e.g., "deployments.apps", "pods.", "*.monitoring.coreos.com").
+	// If empty, all resource types are included (subject to excludeResources).
+	// +optional
+	IncludeResources []string `json:"includeResources,omitempty"`
+
+	// ExcludeResources specifies patterns for resource types to exclude from watching.
+	// Pattern format: "resource.group" (e.g., "secrets.", "*.internal.autoscaling.k8s.io").
+	// Applied after includeResources filtering.
+	// +optional
+	ExcludeResources []string `json:"excludeResources,omitempty"`
+
+	// WatchNamespaces restricts resource instance watching to the listed namespaces.
+	// If empty, all namespaces are watched (metav1.NamespaceAll).
+	// Use this on large clusters to prevent OOM from listing millions of objects across hundreds of namespaces.
+	// +optional
+	WatchNamespaces []string `json:"watchNamespaces,omitempty"`
+
+	// WatchNamespaceLabelSelector restricts resource instance watching to namespaces matching this label selector.
+	// Resolved once at controller startup; restart the controller to pick up new matching namespaces.
+	// Takes precedence over WatchNamespaces when both are set.
+	// Example: "dot-ai.devopstoolkit.live/sync=true"
+	// +optional
+	WatchNamespaceLabelSelector string `json:"watchNamespaceLabelSelector,omitempty"`
 }
 
 // ResourceSyncConfigStatus defines the observed state of ResourceSyncConfig

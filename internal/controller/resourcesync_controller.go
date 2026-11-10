@@ -214,12 +214,13 @@ type ResourceSyncReconciler struct {
 
 // activeConfigState holds the state for an active ResourceSyncConfig
 type activeConfigState struct {
-	config          *dotaiv1alpha1.ResourceSyncConfig
-	informerFactory dynamicinformer.DynamicSharedInformerFactory
-	activeInformers map[schema.GroupVersionResource]cache.SharedIndexInformer
-	informersMu     sync.RWMutex // protects activeInformers
-	stopCh          chan struct{}
-	cancel          context.CancelFunc
+	config            *dotaiv1alpha1.ResourceSyncConfig
+	informerFactory   dynamicinformer.DynamicSharedInformerFactory   // cluster-wide, CRD watcher only
+	informerFactories []dynamicinformer.DynamicSharedInformerFactory // per namespace (or cluster-wide if no filter)
+	activeInformers   map[schema.GroupVersionResource]cache.SharedIndexInformer
+	informersMu       sync.RWMutex // protects activeInformers
+	stopCh            chan struct{}
+	cancel            context.CancelFunc
 	// changeQueue receives resource changes from informer event handlers
 	// Buffered to prevent blocking informers during bursts
 	changeQueue chan *ResourceChange
@@ -377,7 +378,60 @@ func (r *ResourceSyncReconciler) configChanged(old, new *dotaiv1alpha1.ResourceS
 		old.Spec.McpAuthSecretRef.Key != new.Spec.McpAuthSecretRef.Key {
 		return true
 	}
+	if !stringSlicesEqual(old.Spec.IncludeResources, new.Spec.IncludeResources) {
+		return true
+	}
+	if !stringSlicesEqual(old.Spec.ExcludeResources, new.Spec.ExcludeResources) {
+		return true
+	}
+	if !stringSlicesEqual(old.Spec.WatchNamespaces, new.Spec.WatchNamespaces) {
+		return true
+	}
+	if old.Spec.WatchNamespaceLabelSelector != new.Spec.WatchNamespaceLabelSelector {
+		return true
+	}
 	return false
+}
+
+// resolveWatchNamespaces returns the list of namespaces to watch based on the config.
+// WatchNamespaceLabelSelector takes precedence over WatchNamespaces.
+// Returns nil (watch all namespaces) when neither is set.
+func (r *ResourceSyncReconciler) resolveWatchNamespaces(ctx context.Context, config *dotaiv1alpha1.ResourceSyncConfig) []string {
+	logger := logf.FromContext(ctx).WithName("resourcesync")
+
+	if config.Spec.WatchNamespaceLabelSelector != "" {
+		selector, err := metav1.ParseToLabelSelector(config.Spec.WatchNamespaceLabelSelector)
+		if err != nil {
+			logger.Error(err, "Invalid watchNamespaceLabelSelector, falling back to WatchNamespaces", "selector", config.Spec.WatchNamespaceLabelSelector)
+		} else {
+			labelMap, err := metav1.LabelSelectorAsMap(selector)
+			if err != nil {
+				logger.Error(err, "Failed to convert label selector, falling back to WatchNamespaces", "selector", config.Spec.WatchNamespaceLabelSelector)
+			} else {
+				nsList := &corev1.NamespaceList{}
+				if err := r.Client.List(ctx, nsList, client.MatchingLabels(labelMap)); err != nil {
+					logger.Error(err, "Failed to list namespaces by label selector, falling back to WatchNamespaces", "selector", config.Spec.WatchNamespaceLabelSelector)
+				} else if len(nsList.Items) > 0 {
+					names := make([]string, len(nsList.Items))
+					for i, ns := range nsList.Items {
+						names[i] = ns.Name
+					}
+					logger.Info("Scoping resource watching to label-selected namespaces", "selector", config.Spec.WatchNamespaceLabelSelector, "namespaces", names)
+					return names
+				} else {
+					logger.Info("No namespaces matched label selector, falling back to WatchNamespaces", "selector", config.Spec.WatchNamespaceLabelSelector)
+				}
+			}
+		}
+	}
+
+	if len(config.Spec.WatchNamespaces) > 0 {
+		logger.Info("Scoping resource watching to explicit namespaces", "namespaces", config.Spec.WatchNamespaces)
+		return config.Spec.WatchNamespaces
+	}
+
+	logger.Info("No namespace filter configured, watching all namespaces")
+	return nil
 }
 
 // startWatcher starts watching all cluster resources for the given config
@@ -387,11 +441,24 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 	// Create a cancellable context for this watcher
 	watcherCtx, cancel := context.WithCancel(context.Background())
 
-	// Create informer factory
-	informerFactory := dynamicinformer.NewDynamicSharedInformerFactory(
-		r.dynamicClient,
-		30*time.Minute, // Cache resync period
-	)
+	// CRD watcher always needs cluster-wide access (CRDs are cluster-scoped).
+	informerFactory := dynamicinformer.NewDynamicSharedInformerFactory(r.dynamicClient, 30*time.Minute)
+
+	// Resource informer factories — one per namespace when namespace filtering is configured.
+	// This prevents OOM on large clusters by avoiding cluster-wide LIST of all objects.
+	watchNamespaces := r.resolveWatchNamespaces(ctx, config)
+	var informerFactories []dynamicinformer.DynamicSharedInformerFactory
+	if len(watchNamespaces) == 0 {
+		informerFactories = []dynamicinformer.DynamicSharedInformerFactory{
+			dynamicinformer.NewDynamicSharedInformerFactory(r.dynamicClient, 30*time.Minute),
+		}
+	} else {
+		for _, ns := range watchNamespaces {
+			informerFactories = append(informerFactories,
+				dynamicinformer.NewFilteredDynamicSharedInformerFactory(r.dynamicClient, 30*time.Minute, ns, nil),
+			)
+		}
+	}
 
 	// Create change queue
 	changeQueue := make(chan *ResourceChange, changeQueueBufferSize)
@@ -426,14 +493,15 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 	})
 
 	state := &activeConfigState{
-		config:          config.DeepCopy(),
-		informerFactory: informerFactory,
-		activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
-		stopCh:          make(chan struct{}),
-		cancel:          cancel,
-		changeQueue:     changeQueue,
-		debounceBuffer:  debounceBuffer,
-		mcpClient:       mcpClient,
+		config:            config.DeepCopy(),
+		informerFactory:   informerFactory,
+		informerFactories: informerFactories,
+		activeInformers:   make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
+		stopCh:            make(chan struct{}),
+		cancel:            cancel,
+		changeQueue:       changeQueue,
+		debounceBuffer:    debounceBuffer,
+		mcpClient:         mcpClient,
 	}
 
 	// Discover existing resources and setup informers
@@ -460,6 +528,9 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 
 	// Start informers
 	informerFactory.Start(state.stopCh)
+	for _, f := range informerFactories {
+		f.Start(state.stopCh)
+	}
 
 	// Start debounce buffer in background
 	go func() {
@@ -472,6 +543,9 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 	go func() {
 		logger.Info("Waiting for informer caches to sync", "config", config.Name)
 		informerFactory.WaitForCacheSync(state.stopCh)
+		for _, f := range state.informerFactories {
+			f.WaitForCacheSync(state.stopCh)
+		}
 		logger.Info("Informer caches synced", "config", config.Name)
 
 		// Check if context is still valid
@@ -543,7 +617,7 @@ func (r *ResourceSyncReconciler) onCRDAdd(state *activeConfigState, obj interfac
 	}
 
 	// Check if we should skip this resource
-	if r.shouldSkipResource(gvr.Group, gvr.Resource) {
+	if r.shouldSkipResource(gvr.Group, gvr.Resource, &state.config.Spec) {
 		logger.V(2).Info("Skipping CRD resource", "gvr", gvr.String())
 		return
 	}
@@ -557,27 +631,32 @@ func (r *ResourceSyncReconciler) onCRDAdd(state *activeConfigState, obj interfac
 		return // Already watching this resource type
 	}
 
-	// Create informer for the new CRD
+	// Create informers for the new CRD across all namespace-scoped factories.
 	logger.Info("New CRD detected, creating informer", "crd", u.GetName(), "gvr", gvr.String())
 
-	informer := state.informerFactory.ForResource(gvr).Informer()
-
-	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    r.makeOnAdd(state),
-		UpdateFunc: r.makeOnUpdate(state),
-		DeleteFunc: r.makeOnDelete(state),
-	})
-	if err != nil {
-		logger.Error(err, "Failed to add event handler for new CRD", "gvr", gvr.String())
-		return
+	var firstInformer cache.SharedIndexInformer
+	for _, factory := range state.informerFactories {
+		informer := factory.ForResource(gvr).Informer()
+		_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    r.makeOnAdd(state),
+			UpdateFunc: r.makeOnUpdate(state),
+			DeleteFunc: r.makeOnDelete(state),
+		})
+		if err != nil {
+			logger.Error(err, "Failed to add event handler for new CRD", "gvr", gvr.String())
+			return
+		}
+		factory.Start(state.stopCh)
+		if firstInformer == nil {
+			firstInformer = informer
+		}
 	}
 
 	state.informersMu.Lock()
-	state.activeInformers[gvr] = informer
+	state.activeInformers[gvr] = firstInformer
 	state.informersMu.Unlock()
 
-	// Start the informer (the factory handles this for new informers)
-	go informer.Run(state.stopCh)
+	// Factories were already started above via factory.Start(state.stopCh)
 
 	logger.Info("Informer created for new CRD", "gvr", gvr.String())
 }
@@ -697,44 +776,79 @@ func (r *ResourceSyncReconciler) stopWatcher(name string) {
 	delete(r.activeConfigs, name)
 }
 
-// discoverAndSetupInformers discovers all built-in resource types and creates informers
-// CRDs are handled separately by the CRD watcher for immediate detection
+// informerBatchSize controls how many resource-type informers are started concurrently.
+// Each informer opens a watch connection and runs goroutines for its reflector; starting
+// too many simultaneously causes a memory spike before any objects are listed.
+const informerBatchSize = 10
+
+// discoverAndSetupInformers discovers all built-in resource types and creates informers.
+// Informers are started in small batches and each batch is fully synced before the next
+// begins, bounding the number of concurrent LIST/WATCH operations and avoiding OOM.
 func (r *ResourceSyncReconciler) discoverAndSetupInformers(ctx context.Context, state *activeConfigState) error {
 	logger := logf.FromContext(ctx).WithName("resourcesync")
 
-	// Discover all resource types (built-in + existing CRDs)
-	gvrs, err := r.discoverResources(ctx)
+	gvrs, err := r.discoverResources(ctx, &state.config.Spec)
 	if err != nil {
 		return fmt.Errorf("failed to discover resources: %w", err)
 	}
 
 	logger.Info("Discovered resource types", "count", len(gvrs))
 
-	state.informersMu.Lock()
-	defer state.informersMu.Unlock()
+	for i := 0; i < len(gvrs); i += informerBatchSize {
+		end := i + informerBatchSize
+		if end > len(gvrs) {
+			end = len(gvrs)
+		}
+		batch := gvrs[i:end]
 
-	// Add informers for discovered GVRs
-	for _, gvr := range gvrs {
-		if _, exists := state.activeInformers[gvr]; exists {
-			continue // Already have an informer for this GVR
+		var batchSyncFuncs []cache.InformerSynced
+
+		state.informersMu.Lock()
+		for _, gvr := range batch {
+			if _, exists := state.activeInformers[gvr]; exists {
+				continue
+			}
+
+			var firstInformer cache.SharedIndexInformer
+			failed := false
+			for _, factory := range state.informerFactories {
+				informer := factory.ForResource(gvr).Informer()
+				if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+					AddFunc:    r.makeOnAdd(state),
+					UpdateFunc: r.makeOnUpdate(state),
+					DeleteFunc: r.makeOnDelete(state),
+				}); err != nil {
+					logger.Error(err, "Failed to add event handler", "gvr", gvr.String())
+					failed = true
+					break
+				}
+				if firstInformer == nil {
+					firstInformer = informer
+				}
+			}
+			if failed {
+				continue
+			}
+
+			state.activeInformers[gvr] = firstInformer
+			batchSyncFuncs = append(batchSyncFuncs, firstInformer.HasSynced)
+			logger.V(1).Info("Created informer", "gvr", gvr.String())
+		}
+		state.informersMu.Unlock()
+
+		// Start only the newly registered informers in this batch.
+		for _, factory := range state.informerFactories {
+			factory.Start(state.stopCh)
 		}
 
-		// Create informer for this GVR
-		informer := state.informerFactory.ForResource(gvr).Informer()
-
-		// Add event handlers (will be fully implemented in M2)
-		_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-			AddFunc:    r.makeOnAdd(state),
-			UpdateFunc: r.makeOnUpdate(state),
-			DeleteFunc: r.makeOnDelete(state),
-		})
-		if err != nil {
-			logger.Error(err, "Failed to add event handler", "gvr", gvr.String())
-			continue
+		// Wait for this batch to fully sync before starting the next.
+		// This bounds peak memory to ~informerBatchSize concurrent LIST/WATCH ops.
+		if len(batchSyncFuncs) > 0 {
+			logger.V(1).Info("Waiting for batch cache sync", "batch", i/informerBatchSize+1, "size", len(batchSyncFuncs))
+			if !cache.WaitForCacheSync(state.stopCh, batchSyncFuncs...) {
+				return fmt.Errorf("timed out waiting for informer batch %d to sync", i/informerBatchSize+1)
+			}
 		}
-
-		state.activeInformers[gvr] = informer
-		logger.V(1).Info("Created informer", "gvr", gvr.String())
 	}
 
 	logger.Info("Informer setup complete", "activeInformers", len(state.activeInformers))
@@ -742,7 +856,7 @@ func (r *ResourceSyncReconciler) discoverAndSetupInformers(ctx context.Context, 
 }
 
 // discoverResources discovers all watchable resource types in the cluster
-func (r *ResourceSyncReconciler) discoverResources(ctx context.Context) ([]schema.GroupVersionResource, error) {
+func (r *ResourceSyncReconciler) discoverResources(ctx context.Context, spec *dotaiv1alpha1.ResourceSyncConfigSpec) ([]schema.GroupVersionResource, error) {
 	logger := logf.FromContext(ctx).WithName("resourcesync")
 
 	// Get all API resources
@@ -779,7 +893,7 @@ func (r *ResourceSyncReconciler) discoverResources(ctx context.Context) ([]schem
 			}
 
 			// Skip certain high-volume, low-value resources
-			if r.shouldSkipResource(gv.Group, resource.Name) {
+			if r.shouldSkipResource(gv.Group, resource.Name, spec) {
 				logger.V(2).Info("Skipping resource", "group", gv.Group, "resource", resource.Name)
 				continue
 			}
@@ -793,29 +907,112 @@ func (r *ResourceSyncReconciler) discoverResources(ctx context.Context) ([]schem
 		}
 	}
 
-	return gvrs, nil
+	return r.probeServableGVRs(ctx, gvrs), nil
 }
 
-// shouldSkipResource returns true if the resource should not be watched
-func (r *ResourceSyncReconciler) shouldSkipResource(group, resource string) bool {
-	// Skip Kubernetes Events (high volume, low signal for resource visibility)
+// probeServableGVRs filters out GVRs that are advertised in discovery but cannot actually
+// be listed by the API server (e.g. cloud.google.com/computeclasses on clusters without
+// that feature, or gateway.networking.k8s.io/gatewayclasses without Gateway API installed).
+// Probes run concurrently; any GVR returning NotFound or Gone is silently dropped.
+func (r *ResourceSyncReconciler) probeServableGVRs(ctx context.Context, gvrs []schema.GroupVersionResource) []schema.GroupVersionResource {
+	logger := logf.FromContext(ctx).WithName("resourcesync")
+
+	type result struct {
+		gvr      schema.GroupVersionResource
+		servable bool
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	results := make(chan result, len(gvrs))
+	for _, gvr := range gvrs {
+		gvr := gvr
+		go func() {
+			_, err := r.dynamicClient.Resource(gvr).List(probeCtx, metav1.ListOptions{Limit: 1})
+			if err != nil && (apierrors.IsNotFound(err) || apierrors.IsGone(err) || apierrors.IsMethodNotSupported(err)) {
+				logger.V(1).Info("Resource not available on this cluster, skipping informer (add to excludeResources to silence this probe)", "gvr", gvr.String())
+				results <- result{gvr, false}
+				return
+			}
+			results <- result{gvr, true}
+		}()
+	}
+
+	var servable []schema.GroupVersionResource
+	for range gvrs {
+		r := <-results
+		if r.servable {
+			servable = append(servable, r.gvr)
+		}
+	}
+	return servable
+}
+
+// shouldSkipResource returns true if the resource should not be watched.
+// Applies hardcoded exclusions first, then spec include/exclude patterns.
+func (r *ResourceSyncReconciler) shouldSkipResource(group, resource string, spec *dotaiv1alpha1.ResourceSyncConfigSpec) bool {
+	// Hardcoded exclusions: high-volume, low-value resources
 	if group == "" && resource == "events" {
 		return true
 	}
 	if group == "events.k8s.io" && resource == "events" {
 		return true
 	}
-
-	// Skip controller-internal resources
 	if group == "coordination.k8s.io" && resource == "leases" {
 		return true
 	}
-
-	// Skip endpoint slices (high churn)
 	if group == "discovery.k8s.io" && resource == "endpointslices" {
 		return true
 	}
 
+	if spec == nil {
+		return false
+	}
+
+	// Build "resource.group" identifier for pattern matching
+	resourceID := resource + "." + group
+
+	// Include filter: if specified, resource must match at least one pattern
+	if len(spec.IncludeResources) > 0 {
+		matched := false
+		for _, pattern := range spec.IncludeResources {
+			if matchesResourcePattern(resourceID, pattern) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return true
+		}
+	}
+
+	// Exclude filter: applied after include
+	for _, pattern := range spec.ExcludeResources {
+		if matchesResourcePattern(resourceID, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// matchesResourcePattern checks if "resource.group" matches a pattern with wildcard support.
+// Pattern format: "resource.group" | "*.group" | "resource.*" | "*"
+func matchesResourcePattern(resourceID, pattern string) bool {
+	if resourceID == pattern || pattern == "*" {
+		return true
+	}
+	// Wildcard prefix: "*.group"
+	if len(pattern) > 1 && pattern[0] == '*' {
+		suffix := pattern[1:]
+		return len(resourceID) >= len(suffix) && resourceID[len(resourceID)-len(suffix):] == suffix
+	}
+	// Wildcard suffix: "resource.*"
+	if len(pattern) > 1 && pattern[len(pattern)-1] == '*' {
+		prefix := pattern[:len(pattern)-1]
+		return len(resourceID) >= len(prefix) && resourceID[:len(prefix)] == prefix
+	}
 	return false
 }
 
