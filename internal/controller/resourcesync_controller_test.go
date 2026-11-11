@@ -8,6 +8,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -37,43 +38,198 @@ var _ = Describe("ResourceSync Controller", func() {
 
 	Describe("shouldSkipResource", func() {
 		It("should skip core events", func() {
-			Expect(reconciler.shouldSkipResource("", "events")).To(BeTrue())
+			Expect(reconciler.shouldSkipResource("", "events", nil)).To(BeTrue())
 		})
 
 		It("should skip events.k8s.io events", func() {
-			Expect(reconciler.shouldSkipResource("events.k8s.io", "events")).To(BeTrue())
+			Expect(reconciler.shouldSkipResource("events.k8s.io", "events", nil)).To(BeTrue())
 		})
 
 		It("should skip coordination.k8s.io leases", func() {
-			Expect(reconciler.shouldSkipResource("coordination.k8s.io", "leases")).To(BeTrue())
+			Expect(reconciler.shouldSkipResource("coordination.k8s.io", "leases", nil)).To(BeTrue())
 		})
 
 		It("should skip discovery.k8s.io endpointslices", func() {
-			Expect(reconciler.shouldSkipResource("discovery.k8s.io", "endpointslices")).To(BeTrue())
+			Expect(reconciler.shouldSkipResource("discovery.k8s.io", "endpointslices", nil)).To(BeTrue())
 		})
 
 		It("should NOT skip pods", func() {
-			Expect(reconciler.shouldSkipResource("", "pods")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("", "pods", nil)).To(BeFalse())
 		})
 
 		It("should NOT skip deployments", func() {
-			Expect(reconciler.shouldSkipResource("apps", "deployments")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("apps", "deployments", nil)).To(BeFalse())
 		})
 
 		It("should NOT skip custom resources", func() {
-			Expect(reconciler.shouldSkipResource("dot-ai.devopstoolkit.live", "solutions")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("dot-ai.devopstoolkit.live", "solutions", nil)).To(BeFalse())
 		})
 
 		It("should NOT skip services", func() {
-			Expect(reconciler.shouldSkipResource("", "services")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("", "services", nil)).To(BeFalse())
 		})
 
 		It("should NOT skip configmaps", func() {
-			Expect(reconciler.shouldSkipResource("", "configmaps")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("", "configmaps", nil)).To(BeFalse())
 		})
 
 		It("should NOT skip secrets", func() {
-			Expect(reconciler.shouldSkipResource("", "secrets")).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("", "secrets", nil)).To(BeFalse())
+		})
+
+		It("should skip resource not in includeResources", func() {
+			spec := &dotaiv1alpha1.ResourceSyncConfigSpec{
+				IncludeResources: []string{"deployments.apps"},
+			}
+			Expect(reconciler.shouldSkipResource("", "pods", spec)).To(BeTrue())
+		})
+
+		It("should NOT skip resource matching includeResources", func() {
+			spec := &dotaiv1alpha1.ResourceSyncConfigSpec{
+				IncludeResources: []string{"deployments.apps"},
+			}
+			Expect(reconciler.shouldSkipResource("apps", "deployments", spec)).To(BeFalse())
+		})
+
+		It("should skip resource matching excludeResources", func() {
+			spec := &dotaiv1alpha1.ResourceSyncConfigSpec{
+				ExcludeResources: []string{"secrets."},
+			}
+			Expect(reconciler.shouldSkipResource("", "secrets", spec)).To(BeTrue())
+		})
+
+		It("should skip resource matching wildcard excludeResources", func() {
+			spec := &dotaiv1alpha1.ResourceSyncConfigSpec{
+				ExcludeResources: []string{"*.monitoring.coreos.com"},
+			}
+			Expect(reconciler.shouldSkipResource("monitoring.coreos.com", "prometheuses", spec)).To(BeTrue())
+		})
+
+		It("should let excludeResources win over includeResources", func() {
+			spec := &dotaiv1alpha1.ResourceSyncConfigSpec{
+				IncludeResources: []string{"*.apps"},
+				ExcludeResources: []string{"replicasets.apps"},
+			}
+			Expect(reconciler.shouldSkipResource("apps", "deployments", spec)).To(BeFalse())
+			Expect(reconciler.shouldSkipResource("apps", "replicasets", spec)).To(BeTrue())
+		})
+
+		It("should not let includeResources re-enable hardcoded exclusions", func() {
+			spec := &dotaiv1alpha1.ResourceSyncConfigSpec{
+				IncludeResources: []string{"events.", "leases.coordination.k8s.io", "*"},
+			}
+			Expect(reconciler.shouldSkipResource("", "events", spec)).To(BeTrue())
+			Expect(reconciler.shouldSkipResource("coordination.k8s.io", "leases", spec)).To(BeTrue())
+		})
+	})
+
+	Describe("matchesResourcePattern", func() {
+		It("should match exact resource.group", func() {
+			Expect(matchesResourcePattern("deployments.apps", "deployments.apps")).To(BeTrue())
+			Expect(matchesResourcePattern("deployments.apps", "statefulsets.apps")).To(BeFalse())
+		})
+
+		It("should match core resources with a trailing dot", func() {
+			Expect(matchesResourcePattern("pods.", "pods.")).To(BeTrue())
+			Expect(matchesResourcePattern("pods.", "pods")).To(BeFalse())
+		})
+
+		It("should match *.group", func() {
+			Expect(matchesResourcePattern("prometheuses.monitoring.coreos.com", "*.monitoring.coreos.com")).To(BeTrue())
+			Expect(matchesResourcePattern("deployments.apps", "*.monitoring.coreos.com")).To(BeFalse())
+		})
+
+		It("should match resource.*", func() {
+			Expect(matchesResourcePattern("deployments.apps", "deployments.*")).To(BeTrue())
+			Expect(matchesResourcePattern("deployments.example.com", "deployments.*")).To(BeTrue())
+			Expect(matchesResourcePattern("statefulsets.apps", "deployments.*")).To(BeFalse())
+		})
+
+		It("should match everything with *", func() {
+			Expect(matchesResourcePattern("pods.", "*")).To(BeTrue())
+			Expect(matchesResourcePattern("prometheuses.monitoring.coreos.com", "*")).To(BeTrue())
+		})
+	})
+
+	Describe("crdIsNamespaced", func() {
+		crd := func(scope string) *unstructured.Unstructured {
+			spec := map[string]interface{}{"group": "example.com"}
+			if scope != "" {
+				spec["scope"] = scope
+			}
+			return &unstructured.Unstructured{Object: map[string]interface{}{"spec": spec}}
+		}
+
+		It("should return true for Namespaced CRDs", func() {
+			Expect(crdIsNamespaced(crd("Namespaced"))).To(BeTrue())
+		})
+
+		It("should return false for Cluster CRDs", func() {
+			Expect(crdIsNamespaced(crd("Cluster"))).To(BeFalse())
+		})
+	})
+
+	Describe("resolveWatchNamespaces", func() {
+		var label string
+
+		configWith := func(spec dotaiv1alpha1.ResourceSyncConfigSpec) *dotaiv1alpha1.ResourceSyncConfig {
+			return &dotaiv1alpha1.ResourceSyncConfig{Spec: spec}
+		}
+
+		BeforeEach(func() {
+			label = "resolve-ns-test-" + randString(6)
+			for _, ns := range []struct{ name, value string }{{label + "-a", "a"}, {label + "-b", "b"}, {label + "-c", "c"}} {
+				Expect(k8sClient.Create(testCtx, &corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{Name: ns.name, Labels: map[string]string{label: ns.value}},
+				})).To(Succeed())
+			}
+		})
+
+		It("should return nil when no filter is configured", func() {
+			namespaces, err := reconciler.resolveWatchNamespaces(testCtx, configWith(dotaiv1alpha1.ResourceSyncConfigSpec{}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(namespaces).To(BeNil())
+		})
+
+		It("should return watchNamespaces when no selector is set", func() {
+			namespaces, err := reconciler.resolveWatchNamespaces(testCtx, configWith(dotaiv1alpha1.ResourceSyncConfigSpec{
+				WatchNamespaces: []string{"team-a", "team-b"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(namespaces).To(Equal([]string{"team-a", "team-b"}))
+		})
+
+		It("should resolve an equality selector and take precedence over watchNamespaces", func() {
+			namespaces, err := reconciler.resolveWatchNamespaces(testCtx, configWith(dotaiv1alpha1.ResourceSyncConfigSpec{
+				WatchNamespaceLabelSelector: label + "=a",
+				WatchNamespaces:             []string{"team-a"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(namespaces).To(ConsistOf(label + "-a"))
+		})
+
+		It("should resolve a set-based selector", func() {
+			namespaces, err := reconciler.resolveWatchNamespaces(testCtx, configWith(dotaiv1alpha1.ResourceSyncConfigSpec{
+				WatchNamespaceLabelSelector: label + " in (a,b)",
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(namespaces).To(ConsistOf(label+"-a", label+"-b"))
+		})
+
+		It("should return an error for an invalid selector instead of falling back", func() {
+			_, err := reconciler.resolveWatchNamespaces(testCtx, configWith(dotaiv1alpha1.ResourceSyncConfigSpec{
+				WatchNamespaceLabelSelector: "not a valid selector!!",
+				WatchNamespaces:             []string{"team-a"},
+			}))
+			Expect(err).To(MatchError(ContainSubstring("invalid watchNamespaceLabelSelector")))
+		})
+
+		It("should return an error when no namespace matches instead of watching all namespaces", func() {
+			namespaces, err := reconciler.resolveWatchNamespaces(testCtx, configWith(dotaiv1alpha1.ResourceSyncConfigSpec{
+				WatchNamespaceLabelSelector: label + "=nomatch",
+			}))
+			Expect(err).To(MatchError(ContainSubstring("no namespaces match")))
+			Expect(namespaces).To(BeNil())
 		})
 	})
 
@@ -350,6 +506,26 @@ var _ = Describe("ResourceSync Controller", func() {
 				Name: "mcp-secret",
 				Key:  "token",
 			}
+			Expect(reconciler.configChanged(oldConfig, newConfig)).To(BeTrue())
+		})
+
+		It("should detect includeResources change", func() {
+			newConfig.Spec.IncludeResources = []string{"deployments.apps"}
+			Expect(reconciler.configChanged(oldConfig, newConfig)).To(BeTrue())
+		})
+
+		It("should detect excludeResources change", func() {
+			newConfig.Spec.ExcludeResources = []string{"secrets."}
+			Expect(reconciler.configChanged(oldConfig, newConfig)).To(BeTrue())
+		})
+
+		It("should detect watchNamespaces change", func() {
+			newConfig.Spec.WatchNamespaces = []string{"team-a"}
+			Expect(reconciler.configChanged(oldConfig, newConfig)).To(BeTrue())
+		})
+
+		It("should detect watchNamespaceLabelSelector change", func() {
+			newConfig.Spec.WatchNamespaceLabelSelector = "team=a"
 			Expect(reconciler.configChanged(oldConfig, newConfig)).To(BeTrue())
 		})
 
@@ -730,14 +906,14 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(reconciler.ensureClients()).To(Succeed())
 
 			// Discover resources
-			gvrs, err := reconciler.discoverResources(testCtx)
+			gvrs, err := reconciler.discoverResources(testCtx, nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(len(gvrs)).To(BeNumerically(">", 0))
 
 			// Check for expected built-in resources
 			gvrMap := make(map[schema.GroupVersionResource]bool)
 			for _, gvr := range gvrs {
-				gvrMap[gvr] = true
+				gvrMap[gvr.GroupVersionResource] = true
 			}
 
 			// Core resources
@@ -759,7 +935,7 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(reconciler.ensureClients()).To(Succeed())
 
 			// Discover resources
-			gvrs, err := reconciler.discoverResources(testCtx)
+			gvrs, err := reconciler.discoverResources(testCtx, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Check that skipped resources are not included
@@ -770,12 +946,28 @@ var _ = Describe("ResourceSync Controller", func() {
 			}
 		})
 
+		It("should record whether each resource type is namespaced", func() {
+			Expect(reconciler.ensureClients()).To(Succeed())
+
+			resources, err := reconciler.discoverResources(testCtx, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			namespaced := make(map[schema.GroupVersionResource]bool)
+			for _, res := range resources {
+				namespaced[res.GroupVersionResource] = res.Namespaced
+			}
+			Expect(namespaced).To(HaveKeyWithValue(schema.GroupVersionResource{Version: "v1", Resource: "pods"}, true))
+			Expect(namespaced).To(HaveKeyWithValue(schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, true))
+			Expect(namespaced).To(HaveKeyWithValue(schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}, false))
+			Expect(namespaced).To(HaveKeyWithValue(schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}, false))
+		})
+
 		It("should skip subresources", func() {
 			// Initialize clients
 			Expect(reconciler.ensureClients()).To(Succeed())
 
 			// Discover resources
-			gvrs, err := reconciler.discoverResources(testCtx)
+			gvrs, err := reconciler.discoverResources(testCtx, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Check that no subresources are included
@@ -1719,7 +1911,7 @@ var _ = Describe("ResourceSync Controller", func() {
 		Describe("listAllResources", func() {
 			It("should return empty slice when no informers exist", func() {
 				state := &activeConfigState{
-					activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
+					activeInformers: make(map[schema.GroupVersionResource][]cache.SharedIndexInformer),
 				}
 
 				resources := reconciler.listAllResources(state)
@@ -1744,8 +1936,8 @@ var _ = Describe("ResourceSync Controller", func() {
 				mockInformer := &mockInformer{store: mockStore}
 
 				state := &activeConfigState{
-					activeInformers: map[schema.GroupVersionResource]cache.SharedIndexInformer{
-						crdGVR: mockInformer,
+					activeInformers: map[schema.GroupVersionResource][]cache.SharedIndexInformer{
+						crdGVR: {mockInformer},
 					},
 				}
 
@@ -1794,8 +1986,8 @@ var _ = Describe("ResourceSync Controller", func() {
 				}
 
 				state := &activeConfigState{
-					activeInformers: map[schema.GroupVersionResource]cache.SharedIndexInformer{
-						deploymentsGVR: mockInformer,
+					activeInformers: map[schema.GroupVersionResource][]cache.SharedIndexInformer{
+						deploymentsGVR: {mockInformer},
 					},
 				}
 
@@ -1857,9 +2049,9 @@ var _ = Describe("ResourceSync Controller", func() {
 				}
 
 				state := &activeConfigState{
-					activeInformers: map[schema.GroupVersionResource]cache.SharedIndexInformer{
-						{Group: "apps", Version: "v1", Resource: "deployments"}: &mockInformer{store: deploymentsStore},
-						{Group: "", Version: "v1", Resource: "pods"}:            &mockInformer{store: podsStore},
+					activeInformers: map[schema.GroupVersionResource][]cache.SharedIndexInformer{
+						{Group: "apps", Version: "v1", Resource: "deployments"}: {&mockInformer{store: deploymentsStore}},
+						{Group: "", Version: "v1", Resource: "pods"}:            {&mockInformer{store: podsStore}},
 					},
 				}
 
@@ -1874,13 +2066,46 @@ var _ = Describe("ResourceSync Controller", func() {
 				Expect(kinds["Deployment"]).To(Equal(1))
 				Expect(kinds["Pod"]).To(Equal(2))
 			})
+
+			It("should list resources from every namespace informer of a type", func() {
+				podIn := func(name, namespace string) *unstructured.Unstructured {
+					return &unstructured.Unstructured{
+						Object: map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "Pod",
+							"metadata": map[string]interface{}{
+								"name":      name,
+								"namespace": namespace,
+							},
+						},
+					}
+				}
+
+				state := &activeConfigState{
+					activeInformers: map[schema.GroupVersionResource][]cache.SharedIndexInformer{
+						{Group: "", Version: "v1", Resource: "pods"}: {
+							&mockInformer{store: &mockStore{items: []interface{}{podIn("a1", "team-a")}}},
+							&mockInformer{store: &mockStore{items: []interface{}{podIn("b1", "team-b"), podIn("b2", "team-b")}}},
+						},
+					},
+				}
+
+				resources := reconciler.listAllResources(state)
+				Expect(resources).To(HaveLen(3))
+
+				namespaces := make(map[string]int)
+				for _, r := range resources {
+					namespaces[r.Namespace]++
+				}
+				Expect(namespaces).To(Equal(map[string]int{"team-a": 1, "team-b": 2}))
+			})
 		})
 
 		Describe("performResync", func() {
 			It("should skip resync when MCP client is nil", func() {
 				state := &activeConfigState{
 					mcpClient:       nil,
-					activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
+					activeInformers: make(map[schema.GroupVersionResource][]cache.SharedIndexInformer),
 				}
 
 				count, err := reconciler.performResync(testCtx, state)
@@ -1893,7 +2118,7 @@ var _ = Describe("ResourceSync Controller", func() {
 					mcpClient: &MCPResourceSyncClient{
 						endpoint: "http://test.example.com",
 					},
-					activeInformers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer),
+					activeInformers: make(map[schema.GroupVersionResource][]cache.SharedIndexInformer),
 				}
 
 				count, err := reconciler.performResync(testCtx, state)
