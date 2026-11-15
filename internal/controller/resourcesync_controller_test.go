@@ -9,10 +9,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -148,6 +152,28 @@ var _ = Describe("ResourceSync Controller", func() {
 		It("should match everything with *", func() {
 			Expect(matchesResourcePattern("pods.", "*")).To(BeTrue())
 			Expect(matchesResourcePattern("prometheuses.monitoring.coreos.com", "*")).To(BeTrue())
+		})
+	})
+
+	Describe("probeGVR", func() {
+		gvr := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "widgets"}
+
+		// probeWith probes gvr against a fake API server whose LIST always fails with err.
+		probeWith := func(err error) bool {
+			client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+				map[schema.GroupVersionResource]string{gvr: "WidgetList"})
+			client.PrependReactor("list", "widgets", func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, err
+			})
+			return (&ResourceSyncReconciler{dynamicClient: client}).probeGVR(testCtx, gvr)
+		}
+
+		It("should keep a type whose probe keeps failing transiently, so its informer can catch up", func() {
+			Expect(probeWith(apierrors.NewTooManyRequests("throttled", 0))).To(BeTrue())
+		})
+
+		It("should drop a type the API server does not serve", func() {
+			Expect(probeWith(apierrors.NewNotFound(gvr.GroupResource(), ""))).To(BeFalse())
 		})
 	})
 

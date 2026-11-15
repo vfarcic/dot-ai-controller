@@ -545,20 +545,20 @@ func (r *ResourceSyncReconciler) startWatcher(ctx context.Context, config *dotai
 
 	// Wait for cache sync, then perform initial sync and start periodic resync
 	go func() {
+		// A full resync deletes from MCP every resource it does not contain, so it must not start
+		// from partial caches. Keep waiting; incremental changes flow from synced informers meanwhile.
+		// The informer set is re-read on every attempt, so deleted CRDs stop blocking the wait.
 		logger.Info("Waiting for informer caches to sync", "config", config.Name)
-		if waitForCacheSyncWithTimeout(state.stopCh, informerSyncTimeout, state.syncedFuncs()...) {
-			logger.Info("Informer caches synced", "config", config.Name)
-		} else {
-			logger.Info("Not all informer caches synced in time, proceeding with initial sync", "config", config.Name)
+		for !waitForCacheSyncWithTimeout(state.stopCh, informerSyncTimeout, state.syncedFuncs()...) {
+			select {
+			case <-watcherCtx.Done():
+				logger.Info("Context cancelled, skipping initial sync", "config", config.Name)
+				return
+			default:
+			}
+			logger.Info("Not all informer caches synced yet, delaying the initial sync", "config", config.Name)
 		}
-
-		// Check if context is still valid
-		select {
-		case <-watcherCtx.Done():
-			logger.Info("Context cancelled, skipping initial sync", "config", config.Name)
-			return
-		default:
-		}
+		logger.Info("Informer caches synced", "config", config.Name)
 
 		// Perform initial sync
 		r.performInitialSync(watcherCtx, state, configKey(config))
@@ -1019,8 +1019,8 @@ func (r *ResourceSyncReconciler) probeServableGVRs(ctx context.Context, resource
 
 // probeGVR reports whether gvr can be listed. Types missing on the API server are dropped
 // silently. Transient failures (timeouts, throttling) are retried; if they persist the type is
-// skipped until the watcher restarts, rather than given an informer that may never sync.
-// Other errors (e.g. Forbidden) keep the type so that its informer reports them.
+// kept, so its informer can catch up once the API server recovers. Other errors (e.g.
+// Forbidden) keep the type so that its informer reports them.
 func (r *ResourceSyncReconciler) probeGVR(ctx context.Context, gvr schema.GroupVersionResource) bool {
 	logger := logf.FromContext(ctx).WithName("resourcesync")
 
@@ -1043,14 +1043,14 @@ func (r *ResourceSyncReconciler) probeGVR(ctx context.Context, gvr schema.GroupV
 		if attempt < probeAttempts {
 			select {
 			case <-ctx.Done():
-				return false
+				return true
 			case <-time.After(time.Duration(attempt) * time.Second):
 			}
 		}
 	}
 
-	logger.Info("Resource probe kept failing, skipping informer until the watcher restarts", "gvr", gvr.String(), "error", err.Error())
-	return false
+	logger.Info("Resource probe kept failing, keeping the informer so it can catch up", "gvr", gvr.String(), "error", err.Error())
+	return true
 }
 
 // isTransientProbeError reports whether a probe failure may succeed on retry.
