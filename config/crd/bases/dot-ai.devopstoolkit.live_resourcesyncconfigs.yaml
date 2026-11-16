@@ -73,6 +73,22 @@ spec:
                 maximum: 300
                 minimum: 1
                 type: integer
+              excludeResources:
+                description: |-
+                  ExcludeResources specifies patterns for resource types to exclude from watching.
+                  Pattern format: "resource.group" (e.g., "secrets.", "*.internal.autoscaling.k8s.io").
+                  Applied after includeResources filtering.
+                items:
+                  type: string
+                type: array
+              includeResources:
+                description: |-
+                  IncludeResources specifies patterns for resource types to watch and sync.
+                  Pattern format: "resource.group" (e.g., "deployments.apps", "pods.", "*.monitoring.coreos.com").
+                  If empty, all resource types are included (subject to excludeResources).
+                items:
+                  type: string
+                type: array
               mcpAuthSecretRef:
                 description: |-
                   McpAuthSecretRef references a Kubernetes Secret containing the MCP authentication token
@@ -100,6 +116,23 @@ spec:
                 maximum: 1440
                 minimum: 1
                 type: integer
+              watchNamespaceLabelSelector:
+                description: |-
+                  WatchNamespaceLabelSelector restricts resource instance watching to namespaces matching this label selector.
+                  Supports equality- and set-based syntax (e.g., "dot-ai.devopstoolkit.live/sync=true", "team in (a,b)").
+                  Resolved when the watcher starts; restart the controller to pick up new matching namespaces.
+                  Takes precedence over WatchNamespaces when both are set.
+                  An invalid selector, or one that matches no namespace, is reported as an error and retried;
+                  the controller never falls back to watching all namespaces.
+                type: string
+              watchNamespaces:
+                description: |-
+                  WatchNamespaces restricts resource instance watching to the listed namespaces.
+                  If empty, all namespaces are watched (metav1.NamespaceAll).
+                  Use this on large clusters to prevent OOM from listing millions of objects across hundreds of namespaces.
+                items:
+                  type: string
+                type: array
             required:
             - mcpAuthSecretRef
             - mcpEndpoint
