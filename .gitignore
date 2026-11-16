@@ -16,3 +16,9 @@ testbin/
 kind.yaml
 
 /gke_gcloud_auth_plugin_cache
+
+
+# Release workflow artifacts (helm package output, generated release notes)
+/*.tgz
+/release_notes_content.md
+/release_body.md
