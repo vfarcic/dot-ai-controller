@@ -39,6 +39,10 @@ jobs:
       with:
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
+        # Push the release commit to main over SSH with a write deploy key. The main ruleset
+        # requires pull requests; deploy keys are its bypass actor (GITHUB_TOKEN cannot bypass
+        # rulesets on user-owned repositories).
+        ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
         submodules: true
 
     - name: Determine version and mode
