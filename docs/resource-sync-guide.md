@@ -95,6 +95,36 @@ This design means resource discovery happens via semantic search in Qdrant, whil
 | `mcpAuthSecretRef` | SecretReference | Yes | - | Secret containing API key for MCP authentication |
 | `debounceWindowSeconds` | int | No | 10 | Time window to batch changes before syncing |
 | `resyncIntervalMinutes` | int | No | 60 | Full resync interval (catches missed events) |
+| `includeResources` | []string | No | all | `resource.group` patterns of resource types to watch |
+| `excludeResources` | []string | No | none | `resource.group` patterns of resource types to skip, applied after `includeResources` |
+| `watchNamespaces` | []string | No | all | Watch namespaced resources only in these namespaces |
+| `watchNamespaceLabelSelector` | string | No | - | Watch namespaced resources only in namespaces matching this label selector; takes precedence over `watchNamespaces` |
+
+### Limiting What Gets Watched
+
+By default the controller creates an informer for every resource type in the cluster and lists objects across all namespaces. On large clusters (hundreds of CRDs, many namespaces) this can use a lot of memory. Use the filtering fields to reduce it. All of them are optional, and leaving them unset keeps the default behavior.
+
+**Resource types** (`includeResources`, `excludeResources`) use `resource.group` patterns:
+
+| Pattern | Matches |
+|---------|---------|
+| `deployments.apps` | Deployments only |
+| `pods.` | Core (no group) Pods; note the trailing dot |
+| `*.monitoring.coreos.com` | Every resource type in the `monitoring.coreos.com` group |
+| `certificates.*` | `certificates` in any group |
+| `*` | Every resource type |
+
+When `includeResources` is set, only matching types are watched. `excludeResources` then removes types from that set. Events, Leases and EndpointSlices are always skipped, and including them has no effect.
+
+**Namespaces** (`watchNamespaces`, `watchNamespaceLabelSelector`) limit where instances of namespaced types are watched. Cluster-scoped types, such as Nodes, Namespaces or cluster-scoped CRDs, are always watched cluster-wide.
+
+- `watchNamespaces` is a fixed list. Duplicate entries are ignored, and empty names are rejected.
+- `watchNamespaceLabelSelector` accepts equality-based (`team=payments`) and set-based (`team in (payments,checkout)`) selectors. The matching namespaces are resolved when the watcher starts. A namespace that gets the label later is not picked up until the controller restarts or the `ResourceSyncConfig` changes.
+- An invalid selector, or one that matches no namespace, is reported as an error and retried. The controller never falls back to watching all namespaces.
+
+Resources that fall outside the filters are removed from the search index at the next full resync.
+
+If you install with the [dot-ai-stack](https://github.com/vfarcic/dot-ai-stack) Helm chart, set these fields with the `resourceSync.includeResources`, `resourceSync.excludeResources`, `resourceSync.watchNamespaces` and `resourceSync.watchNamespaceLabelSelector` values.
 
 ## Status
 
@@ -164,6 +194,20 @@ spec:
 
   # Full resync every hour to catch any missed events
   resyncIntervalMinutes: 60
+
+  # Optional: watch only these resource types (default: all)
+  includeResources:
+    - deployments.apps
+    - services.
+    - "*.crossplane.io"
+
+  # Optional: skip these types, applied after includeResources
+  excludeResources:
+    - "*.internal.crossplane.io"
+
+  # Optional: watch namespaced resources only in namespaces labeled team=payments
+  # (takes precedence over watchNamespaces)
+  watchNamespaceLabelSelector: team=payments
 ```
 
 ## Troubleshooting
@@ -180,6 +224,7 @@ Common issues:
 - Invalid `mcpEndpoint` URL
 - MCP service not reachable
 - Missing RBAC permissions
+- `watchNamespaceLabelSelector` is invalid or matches no namespace, or `watchNamespaces` contains an empty name
 
 ### No Resources Being Synced
 

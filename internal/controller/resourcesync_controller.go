@@ -426,8 +426,22 @@ func (r *ResourceSyncReconciler) resolveWatchNamespaces(ctx context.Context, con
 	}
 
 	if len(config.Spec.WatchNamespaces) > 0 {
-		logger.Info("Scoping resource watching to explicit namespaces", "namespaces", config.Spec.WatchNamespaces)
-		return config.Spec.WatchNamespaces, nil
+		// An empty name would create a cluster-wide (NamespaceAll) factory, and a duplicate would
+		// create a second informer for the same namespace and double-count its objects on resync.
+		seen := make(map[string]struct{}, len(config.Spec.WatchNamespaces))
+		names := make([]string, 0, len(config.Spec.WatchNamespaces))
+		for _, ns := range config.Spec.WatchNamespaces {
+			if ns == "" {
+				return nil, fmt.Errorf("watchNamespaces must not contain an empty namespace name")
+			}
+			if _, dup := seen[ns]; dup {
+				continue
+			}
+			seen[ns] = struct{}{}
+			names = append(names, ns)
+		}
+		logger.Info("Scoping resource watching to explicit namespaces", "namespaces", names)
+		return names, nil
 	}
 
 	logger.Info("No namespace filter configured, watching all namespaces")
@@ -674,20 +688,32 @@ func (r *ResourceSyncReconciler) onCRDDelete(state *activeConfigState, obj inter
 		return
 	}
 
-	// Extract GVR from CRD
-	gvr, err := r.gvrFromCRD(u)
-	if err != nil {
-		logger.V(1).Info("Failed to extract GVR from deleted CRD", "crd", u.GetName(), "error", err)
+	group, _, _ := unstructured.NestedString(u.Object, "spec", "group")
+	resource, _, _ := unstructured.NestedString(u.Object, "spec", "names", "plural")
+	if group == "" || resource == "" {
+		logger.V(1).Info("Deleted CRD has no spec.group or spec.names.plural", "crd", u.GetName())
 		return
 	}
 
-	// Remove the informer for this GVR
-	state.informersMu.Lock()
-	if _, exists := state.activeInformers[gvr]; exists {
-		delete(state.activeInformers, gvr)
+	for _, gvr := range state.removeInformersFor(group, resource) {
 		logger.Info("CRD deleted, removed informer", "crd", u.GetName(), "gvr", gvr.String())
 	}
-	state.informersMu.Unlock()
+}
+
+// removeInformersFor removes the informers of every version of group/resource and returns their GVRs.
+// Discovery registers each served version separately, so removing only one version would leave
+// informers for a deleted CRD behind, and one that never synced would block the initial resync.
+func (s *activeConfigState) removeInformersFor(group, resource string) []schema.GroupVersionResource {
+	s.informersMu.Lock()
+	defer s.informersMu.Unlock()
+	var removed []schema.GroupVersionResource
+	for gvr := range s.activeInformers {
+		if gvr.Group == group && gvr.Resource == resource {
+			delete(s.activeInformers, gvr)
+			removed = append(removed, gvr)
+		}
+	}
+	return removed
 }
 
 // crdIsNamespaced reports whether the CRD defines a namespaced resource (spec.scope != "Cluster").

@@ -130,7 +130,10 @@ spec:
                   WatchNamespaces restricts resource instance watching to the listed namespaces.
                   If empty, all namespaces are watched (metav1.NamespaceAll).
                   Use this on large clusters to prevent OOM from listing millions of objects across hundreds of namespaces.
+                  Duplicate entries are ignored.
                 items:
+                  maxLength: 63
+                  minLength: 1
                   type: string
                 type: array
             required:

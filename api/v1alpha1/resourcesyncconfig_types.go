@@ -47,7 +47,10 @@ type ResourceSyncConfigSpec struct {
 	// WatchNamespaces restricts resource instance watching to the listed namespaces.
 	// If empty, all namespaces are watched (metav1.NamespaceAll).
 	// Use this on large clusters to prevent OOM from listing millions of objects across hundreds of namespaces.
+	// Duplicate entries are ignored.
 	// +optional
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=63
 	WatchNamespaces []string `json:"watchNamespaces,omitempty"`
 
 	// WatchNamespaceLabelSelector restricts resource instance watching to namespaces matching this label selector.
