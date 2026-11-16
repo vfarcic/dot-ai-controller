@@ -225,6 +225,22 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(namespaces).To(Equal([]string{"team-a", "team-b"}))
 		})
 
+		It("should drop duplicate watchNamespaces, keeping the first occurrence order", func() {
+			namespaces, err := reconciler.resolveWatchNamespaces(testCtx, configWith(dotaiv1alpha1.ResourceSyncConfigSpec{
+				WatchNamespaces: []string{"team-a", "team-b", "team-a"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(namespaces).To(Equal([]string{"team-a", "team-b"}))
+		})
+
+		It("should reject an empty watchNamespaces entry instead of watching all namespaces", func() {
+			namespaces, err := reconciler.resolveWatchNamespaces(testCtx, configWith(dotaiv1alpha1.ResourceSyncConfigSpec{
+				WatchNamespaces: []string{"team-a", ""},
+			}))
+			Expect(err).To(MatchError(ContainSubstring("empty namespace name")))
+			Expect(namespaces).To(BeNil())
+		})
+
 		It("should resolve an equality selector and take precedence over watchNamespaces", func() {
 			namespaces, err := reconciler.resolveWatchNamespaces(testCtx, configWith(dotaiv1alpha1.ResourceSyncConfigSpec{
 				WatchNamespaceLabelSelector: label + "=a",
@@ -256,6 +272,37 @@ var _ = Describe("ResourceSync Controller", func() {
 			}))
 			Expect(err).To(MatchError(ContainSubstring("no namespaces match")))
 			Expect(namespaces).To(BeNil())
+		})
+	})
+
+	Describe("onCRDDelete", func() {
+		It("should remove the informers of every served version of the deleted CRD", func() {
+			widgetsV1 := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "widgets"}
+			widgetsV1beta1 := schema.GroupVersionResource{Group: "example.com", Version: "v1beta1", Resource: "widgets"}
+			gadgetsV1 := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "gadgets"}
+			otherWidgets := schema.GroupVersionResource{Group: "other.com", Version: "v1", Resource: "widgets"}
+			state := &activeConfigState{
+				activeInformers: map[schema.GroupVersionResource][]cache.SharedIndexInformer{
+					widgetsV1: nil, widgetsV1beta1: nil, gadgetsV1: nil, otherWidgets: nil,
+				},
+			}
+			crd := &unstructured.Unstructured{Object: map[string]interface{}{
+				"metadata": map[string]interface{}{"name": "widgets.example.com"},
+				"spec": map[string]interface{}{
+					"group": "example.com",
+					"names": map[string]interface{}{"plural": "widgets"},
+					"versions": []interface{}{
+						map[string]interface{}{"name": "v1beta1", "served": true, "storage": false},
+						map[string]interface{}{"name": "v1", "served": true, "storage": true},
+					},
+				},
+			}}
+
+			reconciler.onCRDDelete(state, cache.DeletedFinalStateUnknown{Key: "widgets.example.com", Obj: crd})
+
+			Expect(state.activeInformers).To(HaveLen(2))
+			Expect(state.activeInformers).To(HaveKey(gadgetsV1))
+			Expect(state.activeInformers).To(HaveKey(otherWidgets))
 		})
 	})
 
